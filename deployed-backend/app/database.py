@@ -24,6 +24,7 @@ class JobDatabase:
 
     def initialize(self) -> None:
         Path(self.path).parent.mkdir(parents=True, exist_ok=True)
+        now = time.time()
         with self._connect() as connection:
             connection.execute("PRAGMA journal_mode = WAL")
             connection.execute(
@@ -62,6 +63,21 @@ class JobDatabase:
                     created_at
                 )
                 """
+            )
+            # A committing job is exclusively owned by the API process while it
+            # writes to Qdrant. If that process restarts, no old writer can still
+            # be running, so the job is safe to retry. The worker will detect an
+            # already-written point and use complete-existing when appropriate.
+            connection.execute(
+                """
+                UPDATE extraction_jobs
+                SET status = 'pending', available_at = ?, lease_owner = NULL,
+                    lease_token = NULL, lease_expires_at = NULL,
+                    last_error = 'coordinator restarted during completion',
+                    updated_at = ?
+                WHERE status = 'committing'
+                """,
+                (now, now),
             )
 
     @staticmethod
@@ -178,8 +194,16 @@ class JobDatabase:
                 SET lease_expires_at = ?, updated_at = ?
                 WHERE id = ? AND status = 'leased'
                   AND lease_owner = ? AND lease_token = ?
+                  AND lease_expires_at >= ?
                 """,
-                (now + lease_seconds, now, job_id, worker_id, lease_token),
+                (
+                    now + lease_seconds,
+                    now,
+                    job_id,
+                    worker_id,
+                    lease_token,
+                    now,
+                ),
             )
             if cursor.rowcount != 1:
                 raise JobConflictError("job lease is no longer owned by this worker")
@@ -202,8 +226,9 @@ class JobDatabase:
                     last_error = NULL, updated_at = ?
                 WHERE id = ? AND status = 'leased'
                   AND lease_owner = ? AND lease_token = ?
+                  AND lease_expires_at >= ?
                 """,
-                (now, job_id, worker_id, lease_token),
+                (now, job_id, worker_id, lease_token, now),
             )
             if cursor.rowcount != 1:
                 row = connection.execute(
@@ -217,6 +242,75 @@ class JobDatabase:
             ).fetchone()
             assert row is not None
             return dict(row)
+
+    def begin_completion(
+        self, *, job_id: str, worker_id: str, lease_token: str
+    ) -> tuple[dict[str, Any], bool]:
+        """Fence a Qdrant write so this lease cannot be reclaimed mid-upsert."""
+        now = time.time()
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE extraction_jobs
+                SET status = 'committing', updated_at = ?
+                WHERE id = ? AND status = 'leased'
+                  AND lease_owner = ? AND lease_token = ?
+                  AND lease_expires_at >= ?
+                """,
+                (now, job_id, worker_id, lease_token, now),
+            )
+            row = connection.execute(
+                "SELECT * FROM extraction_jobs WHERE id = ?", (job_id,)
+            ).fetchone()
+            if cursor.rowcount == 1:
+                assert row is not None
+                return dict(row), True
+            if row is not None and row["status"] == "completed":
+                return dict(row), False
+            raise JobConflictError("job lease is expired or no longer owned")
+
+    def finish_completion(
+        self, *, job_id: str, worker_id: str, lease_token: str
+    ) -> dict[str, Any]:
+        now = time.time()
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE extraction_jobs
+                SET status = 'completed', lease_owner = NULL,
+                    lease_token = NULL, lease_expires_at = NULL,
+                    last_error = NULL, updated_at = ?
+                WHERE id = ? AND status = 'committing'
+                  AND lease_owner = ? AND lease_token = ?
+                """,
+                (now, job_id, worker_id, lease_token),
+            )
+            row = connection.execute(
+                "SELECT * FROM extraction_jobs WHERE id = ?", (job_id,)
+            ).fetchone()
+            if cursor.rowcount == 1:
+                assert row is not None
+                return dict(row)
+            if row is not None and row["status"] == "completed":
+                return dict(row)
+            raise JobConflictError("job completion fence is no longer owned")
+
+    def abort_completion(
+        self, *, job_id: str, worker_id: str, lease_token: str
+    ) -> None:
+        """Return a failed external write to its lease for normal retry handling."""
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE extraction_jobs
+                SET status = 'leased', updated_at = ?
+                WHERE id = ? AND status = 'committing'
+                  AND lease_owner = ? AND lease_token = ?
+                """,
+                (time.time(), job_id, worker_id, lease_token),
+            )
+            if cursor.rowcount != 1:
+                raise JobConflictError("job completion fence is no longer owned")
 
     def fail(
         self,
@@ -235,8 +329,9 @@ class JobDatabase:
                 SELECT * FROM extraction_jobs
                 WHERE id = ? AND status = 'leased'
                   AND lease_owner = ? AND lease_token = ?
+                  AND lease_expires_at >= ?
                 """,
-                (job_id, worker_id, lease_token),
+                (job_id, worker_id, lease_token, now),
             ).fetchone()
             if row is None:
                 connection.rollback()

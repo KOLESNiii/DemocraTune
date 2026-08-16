@@ -168,26 +168,43 @@ async def complete_job(job_id: str, request: CompleteJobRequest) -> dict[str, An
         raise HTTPException(status_code=404, detail="job not found")
     if job["status"] == "completed":
         return {"job": job}
-    if (
-        job["lease_owner"] != request.worker_id
-        or job["lease_token"] != request.lease_token
-    ):
-        raise HTTPException(status_code=409, detail="job lease is no longer owned")
-
-    await asyncio.to_thread(
-        vectors.upsert,
-        mbid=job["mbid"],
-        pipeline_version=job["pipeline_version"],
-        vector=request.vector,
-        payload={
-            "title": job["title"],
-            "artist": job["artist"],
-            "duration": job["duration"],
-            "attributes": request.attributes,
-        },
-    )
     try:
-        completed = jobs.complete(
+        job, should_write = jobs.begin_completion(
+            job_id=job_id,
+            worker_id=request.worker_id,
+            lease_token=request.lease_token,
+        )
+    except JobConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if not should_write:
+        return {"job": job}
+
+    try:
+        await asyncio.to_thread(
+            vectors.upsert,
+            mbid=job["mbid"],
+            pipeline_version=job["pipeline_version"],
+            vector=request.vector,
+            payload={
+                "title": job["title"],
+                "artist": job["artist"],
+                "duration": job["duration"],
+                "attributes": request.attributes,
+            },
+        )
+    except Exception:
+        try:
+            jobs.abort_completion(
+                job_id=job_id,
+                worker_id=request.worker_id,
+                lease_token=request.lease_token,
+            )
+        except JobConflictError:
+            logger.exception("Could not release completion fence for job %s", job_id)
+        raise
+
+    try:
+        completed = jobs.finish_completion(
             job_id=job_id,
             worker_id=request.worker_id,
             lease_token=request.lease_token,
