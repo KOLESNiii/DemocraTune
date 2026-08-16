@@ -4,6 +4,10 @@
 
 **[Try DemocraTune live](https://democratune.timkolesnichenko.me/)** · **[Tim's website](https://www.timkolesnichenko.me/)**
 
+Deployment and hosting instructions are in [`DEPLOY.MD`](DEPLOY.MD). The
+independent recommendation backend has its own runbook in
+[`deployed-backend/DEPLOY.MD`](deployed-backend/DEPLOY.MD).
+
 ## 🎉 What is DemocraTune?
 
 DemocraTune is an open-source, privacy-friendly music queue system. Hosts can control a central screen while everyone else contributes to the playlist simply by scanning a QR code. No logins, no hassle, just music.
@@ -18,53 +22,58 @@ user-weighted fairness, and experimental features such as voting and karaoke mod
 
 ## Features
 
-- [X] **🔓 No Logins Required**
-  Host and users can use DemocraTune without creating an account.
+- [x] **🔓 No Logins Required**
+      Host and users can use DemocraTune without creating an account.
 
-- [X] **💸 Free for Everyone**
-  DemocraTune is completely free to use.
+- [x] **💸 Free for Everyone**
+      DemocraTune is completely free to use.
 
-- [X] **📺 Perfect for Large Screens**
-  A dedicated host mode designed for TV or laptop screens.
-  (Works flawlessly on mobile too.)
+- [x] **📺 Perfect for Large Screens**
+      A dedicated host mode designed for TV or laptop screens.
+      (Works flawlessly on mobile too.)
 
-- [X] **2️⃣ Queue Management**
-  Hosts can choose one of several queueing algorithms, to fairly select songs from the recommendations.
-  - ***First Come First Served*** - The default scheduling system inherited from SongUp.
-  - ***Round Robin*** - A round robin implementation, taking a song from each user in turn.
-  - ***DemocraSchedule*** - A round robin variation using a user's song voting record. Implemented as
-    smooth weighted round robin, so well-rated users get proportionally more turns while everyone
-    stays interleaved.
-  
-- [X] **🎶 Never Silence**
-  When creating a room, hosts can choose a fallback playlist that will play when no one has added a song to the queue, while
-  songs that users add will always have priority over fallback songs.
+- [x] **2️⃣ Queue Management**
+      Hosts can choose one of several queueing algorithms, to fairly select songs from the recommendations.
+    - **_First Come First Served_** - The default scheduling system inherited from SongUp.
+    - **_Round Robin_** - A round robin implementation, taking a song from each user in turn.
+    - **_DemocraSchedule_** - A round robin variation using a user's song voting record. Implemented as
+      smooth weighted round robin, so well-rated users get proportionally more turns while everyone
+      stays interleaved.
+- [x] **🎶 Never Silence**
+      When creating a room, hosts can choose a fallback playlist that will play when no one has added a song to the queue, while
+      songs that users add will always have priority over fallback songs.
 
-- [X] **✅️❌ Voting**
-  One vote per person per song, up or down. A downvote is also a request to end the song: once enough of
-  the room has cast one, it stops. Hosts set that threshold as a share of the people *currently* in the
-  room, so it stays meaningful as the party fills up and empties out.
+- [x] **🤖 AutoDJ**
+      Hosts can keep a small recommendation buffer between listener requests and
+      the fallback playlist. Accepted songs seed a private server-side engine, with
+      ListenBrainz and the host playlist as graceful fallbacks; recommendation
+      outages never block adding or playing a song.
 
-- [X] **⭐ User Rating**
-  Votes follow whoever queued the song. Higher rated users get more priority to keep adding songs
-  (depending on scheduling algorithm!) — and because the downvotes that cut a song short are counted too,
-  getting voted off costs you your turn. Ratings are scoped to a room, and hosts can choose how many of a
-  user's recent songs still count.
+- [x] **✅️❌ Voting**
+      One vote per person per song, up or down. A downvote is also a request to end the song: once enough of
+      the room has cast one, it stops. Hosts set that threshold as a share of the people _currently_ in the
+      room, so it stays meaningful as the party fills up and empties out.
 
-- [X] **📜 Queue History**
-  Ever liked a song but forgot what the song's name was? With queue history, you can see which songs have been played,
-  and never have to Shazam again.
+- [x] **⭐ User Rating**
+      Votes follow whoever queued the song. Higher rated users get more priority to keep adding songs
+      (depending on scheduling algorithm!) — and because the downvotes that cut a song short are counted too,
+      getting voted off costs you your turn. Ratings are scoped to a room, and hosts can choose how many of a
+      user's recent songs still count.
 
-- [X] **📤 Take It Home**
-  Heard something you liked? Every song in the history links out to wherever else it can be heard —
-  Spotify, Amazon Music, Tidal, Deezer, Pandora and more — and you can send the room's whole night
-  straight to a private playlist on your own Spotify account.
+- [x] **📜 Queue History**
+      Ever liked a song but forgot what the song's name was? With queue history, you can see which songs have been played,
+      and never have to Shazam again.
 
-  Connecting Spotify happens entirely in your browser. DemocraTune never sees your login, and forgets
-  the connection the moment you close the tab.
+- [x] **📤 Take It Home**
+      Heard something you liked? Every song in the history links out to wherever else it can be heard —
+      Spotify, Amazon Music, Tidal, Deezer, Pandora and more — and you can send the room's whole night
+      straight to a private playlist on your own Spotify account.
+
+    Connecting Spotify happens entirely in your browser. DemocraTune never sees your login, and forgets
+    the connection the moment you close the tab.
 
 - [ ] **🎤 Karaoke Mode**
-  Special karaoke mode with synced lyrics.
+      Special karaoke mode with synced lyrics.
 
 ## 📜 License
 

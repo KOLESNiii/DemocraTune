@@ -2,6 +2,7 @@ import { internal } from "./_generated/api"
 import { Doc, Id } from "./_generated/dataModel"
 import type { MutationCtx } from "./_generated/server"
 import { tallyVoteDocs } from "./ratings"
+import { scheduleRecommendationTrack } from "./recommendations"
 import { getNextSong } from "./scheduling"
 import { upsertTrack } from "./tracks"
 
@@ -38,6 +39,7 @@ export async function advanceRoom(
 
         const { likes, dislikes } = tallyVoteDocs(votes)
 
+        const trackId = await upsertTrack(ctx, oldSong)
         await ctx.db.insert("history", {
             room: roomId,
             ...oldSong,
@@ -45,7 +47,12 @@ export async function advanceRoom(
             dislikes,
             // Gives the played song an identity that outlives YouTube, so the
             // night can be exported somewhere else later.
-            track: await upsertTrack(ctx, oldSong),
+            track: trackId,
+        })
+        await scheduleRecommendationTrack(ctx, {
+            roomId,
+            trackId,
+            videoId: oldSong.videoId,
         })
 
         for (const vote of votes) {
@@ -58,11 +65,32 @@ export async function advanceRoom(
     if (nextSong) {
         // Copy only the song fields; the queue doc also carries Convex metadata
         // and a room reference that don't belong on the room.
-        const { addedBy, type, videoId, title, artist, duration } = nextSong
+        const {
+            addedBy,
+            type,
+            videoId,
+            mbid,
+            recommendationSource,
+            title,
+            artist,
+            duration,
+        } = nextSong
         await ctx.db.patch(roomId, {
-            currentSong: { addedBy, type, videoId, title, artist, duration },
+            currentSong: {
+                addedBy,
+                type,
+                videoId,
+                mbid,
+                recommendationSource,
+                title,
+                artist,
+                duration,
+            },
         })
         await ctx.db.delete(nextSong._id)
+        await ctx.scheduler.runAfter(0, internal.recommendations.refreshRoom, {
+            roomId,
+        })
     } else {
         await ctx.db.patch(roomId, { currentSong: undefined })
     }

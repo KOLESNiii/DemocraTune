@@ -32,8 +32,8 @@ export async function attachNicknames(
  * Every song waiting in a room, oldest first.
  *
  * The `by_room_type` index sorts by (room, type, _creationTime), and
- * "addedByUser" sorts before "fallback", so user songs always come out ahead of
- * the host's fallback playlist. The schedulers below rely on that ordering.
+ * The type names sort as addedByUser, autoDj, fallback. The schedulers preserve
+ * that priority: people first, recommendations second, host fallback last.
  */
 async function collectQueue(
     ctx: QueryCtx,
@@ -46,17 +46,23 @@ async function collectQueue(
         .collect()
 }
 
-/** Splits a queue into per-user buckets plus the unowned fallback songs. */
+/** Splits a queue into per-user buckets plus both automatic queue tiers. */
 function bucketByUser(songs: Doc<"queuedSongs">[]): {
     userQueues: Map<string, Doc<"queuedSongs">[]>
+    autoDj: Doc<"queuedSongs">[]
     fallback: Doc<"queuedSongs">[]
 } {
     const userQueues = new Map<string, Doc<"queuedSongs">[]>()
+    const autoDj: Doc<"queuedSongs">[] = []
     const fallback: Doc<"queuedSongs">[] = []
 
     for (const song of songs) {
         if (song.type === "fallback") {
             fallback.push(song)
+            continue
+        }
+        if (song.type === "autoDj") {
+            autoDj.push(song)
             continue
         }
         const key = song.addedBy ?? ANONYMOUS
@@ -65,7 +71,15 @@ function bucketByUser(songs: Doc<"queuedSongs">[]): {
         else userQueues.set(key, [song])
     }
 
-    return { userQueues, fallback }
+    return { userQueues, autoDj, fallback }
+}
+
+function automaticQueue(
+    autoDj: Doc<"queuedSongs">[],
+    fallback: Doc<"queuedSongs">[],
+    numItems: number,
+): Doc<"queuedSongs">[] {
+    return [...autoDj, ...fallback].slice(0, numItems)
 }
 
 /**
@@ -98,10 +112,10 @@ export async function roundRobinQueue(
     const songs = await collectQueue(ctx, roomId)
     if (!songs.length) return []
 
-    const { userQueues, fallback } = bucketByUser(songs)
+    const { userQueues, autoDj, fallback } = bucketByUser(songs)
     const userIds = [...userQueues.keys()].sort()
 
-    if (!userIds.length) return fallback.slice(0, numItems)
+    if (!userIds.length) return automaticQueue(autoDj, fallback, numItems)
 
     const room = await ctx.db.get(roomId)
     const currentUserId = room?.currentSong?.addedBy ?? null
@@ -130,9 +144,11 @@ export async function roundRobinQueue(
         }
     }
 
-    // Fallback songs only fill space the users didn't.
+    // Automatic songs only fill space the users didn't, with AutoDJ first.
     if (ordered.length < numItems) {
-        ordered.push(...fallback.slice(0, numItems - ordered.length))
+        ordered.push(
+            ...automaticQueue(autoDj, fallback, numItems - ordered.length),
+        )
     }
 
     return ordered
@@ -159,10 +175,10 @@ export async function weightedQueue(
     const songs = await collectQueue(ctx, roomId)
     if (!songs.length) return []
 
-    const { userQueues, fallback } = bucketByUser(songs)
+    const { userQueues, autoDj, fallback } = bucketByUser(songs)
     const userIds = [...userQueues.keys()].sort()
 
-    if (!userIds.length) return fallback.slice(0, numItems)
+    if (!userIds.length) return automaticQueue(autoDj, fallback, numItems)
 
     const room = await ctx.db.get(roomId)
     const numSongsToForget = room?.settings?.numSongsToForget ?? -1
@@ -216,7 +232,9 @@ export async function weightedQueue(
     }
 
     if (ordered.length < numItems) {
-        ordered.push(...fallback.slice(0, numItems - ordered.length))
+        ordered.push(
+            ...automaticQueue(autoDj, fallback, numItems - ordered.length),
+        )
     }
 
     return ordered
