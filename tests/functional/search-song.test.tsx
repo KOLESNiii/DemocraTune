@@ -31,10 +31,17 @@ describe("SearchSong", () => {
         )
         await user.click(screen.getByRole("button", { name: "Search" }))
 
-        expect(await screen.findByText("Once in a Lifetime")).toBeInTheDocument()
+        expect(
+            await screen.findByText("Once in a Lifetime"),
+        ).toBeInTheDocument()
         expect(screen.getByText(/Talking Heads/)).toHaveTextContent(
             "Talking Heads · 4:20",
         )
+        expect(
+            screen.getByRole("button", {
+                name: "Add Once in a Lifetime by Talking Heads",
+            }),
+        ).toBeInTheDocument()
         expect(fetchMock).toHaveBeenCalledWith(
             "/api/search?query=talking%20heads",
             expect.objectContaining({
@@ -44,7 +51,7 @@ describe("SearchSong", () => {
             }),
         )
 
-        await user.click(screen.getByRole("button", { name: "Add song" }))
+        await user.click(screen.getByText("Once in a Lifetime"))
 
         await waitFor(() => {
             expect(onSelect).toHaveBeenCalledWith({
