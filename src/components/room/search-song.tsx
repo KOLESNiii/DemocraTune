@@ -187,7 +187,7 @@ export function SearchSong({
     }
 
     return (
-        <div className="flex flex-col gap-4">
+        <div className="flex min-w-0 flex-col gap-4">
             <div className="relative">
                 <Input
                     name="query"
@@ -224,39 +224,15 @@ export function SearchSong({
                     </p>
                 </div>
             )}
-            <ul className="flex flex-col gap-2">
+            <ul className="flex min-w-0 flex-col gap-2">
                 {results.map((song) => {
                     const artist = song.artists
                         .map((artist) => artist.name)
                         .join(", ")
 
                     return (
-                        <li key={song.videoId}>
-                            <form
-                                action={handleSelectSong}
-                                className="border-ink/20 flex items-center justify-between gap-3 border-b py-3 transition-colors hover:bg-white/45"
-                            >
-                                <div className="flex min-w-0 items-center gap-3">
-                                    <ImageWithFallback
-                                        src={`https://i.ytimg.com/vi_webp/${song.videoId}/mqdefault.webp`}
-                                        alt={`${song.title}`}
-                                        width={64}
-                                        height={36}
-                                        className="aspect-video w-20 shrink-0 object-cover"
-                                        unoptimized
-                                    />
-                                    <div className="min-w-0 text-left">
-                                        <p className="truncate text-sm font-semibold">
-                                            {song.title}
-                                        </p>
-                                        <p className="text-muted-foreground truncate text-xs">
-                                            {artist} &middot;{" "}
-                                            {formatDuration(
-                                                song.duration_seconds,
-                                            )}
-                                        </p>
-                                    </div>
-                                </div>
+                        <li key={song.videoId} className="min-w-0">
+                            <form action={handleSelectSong} className="min-w-0">
                                 <input
                                     type="hidden"
                                     name="videoId"
@@ -278,11 +254,37 @@ export function SearchSong({
                                     value={song.duration_seconds}
                                 />
                                 <SubmitButton
-                                    size="sm"
-                                    aria-label="Add song"
-                                    className="rounded-none"
+                                    aria-label={`Add ${song.title} by ${artist}`}
+                                    variant="ghost"
+                                    className="border-ink/20 h-auto w-full max-w-full min-w-0 justify-between gap-3 rounded-none border-b px-0 py-3 text-left whitespace-normal shadow-none hover:bg-white/45"
                                 >
-                                    <PlusCircleIcon className="size-4" />
+                                    <span className="flex min-w-0 flex-1 items-center gap-3">
+                                        <ImageWithFallback
+                                            src={`https://i.ytimg.com/vi_webp/${song.videoId}/mqdefault.webp`}
+                                            alt=""
+                                            width={64}
+                                            height={36}
+                                            className="aspect-video w-20 shrink-0 object-cover"
+                                            unoptimized
+                                        />
+                                        <span className="min-w-0 flex-1">
+                                            <span className="block truncate text-sm font-semibold">
+                                                {song.title}
+                                            </span>
+                                            <span className="text-muted-foreground block truncate text-xs font-normal">
+                                                {artist} &middot;{" "}
+                                                {formatDuration(
+                                                    song.duration_seconds,
+                                                )}
+                                            </span>
+                                        </span>
+                                    </span>
+                                    <span
+                                        aria-hidden="true"
+                                        className="bg-primary text-primary-foreground flex size-8 shrink-0 items-center justify-center"
+                                    >
+                                        <PlusCircleIcon className="size-4" />
+                                    </span>
                                 </SubmitButton>
                             </form>
                         </li>

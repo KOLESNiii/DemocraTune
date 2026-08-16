@@ -24,9 +24,12 @@ const eslintConfig = defineConfig([
     },
     globalIgnores([
         ".next/**",
+        ".vercel/**",
         "out/**",
         "build/**",
         "coverage/**",
+        "playwright-report/**",
+        "test-results/**",
         "src/convex/_generated/**",
         "next-env.d.ts",
     ]),

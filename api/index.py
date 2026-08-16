@@ -37,6 +37,29 @@ app = FastAPI()
 NO_STORE_HEADERS = {"Cache-Control": "no-store"}
 
 
+@app.middleware("http")
+async def restore_public_api_path(request: Request, call_next):
+    """Restore the public route after Vercel rewrites it to this function."""
+    forwarded_path = request.query_params.get("__democratune_api_path")
+    if request.url.path == "/api/index" and forwarded_path:
+        public_path = f"/api/{forwarded_path.lstrip('/')}"
+        request.scope["path"] = public_path
+        request.scope["raw_path"] = public_path.encode()
+
+        # The forwarding parameter is an implementation detail. Preserve every
+        # caller-supplied parameter, including repeated values, for the route.
+        query = [
+            (key, value)
+            for key, value in request.query_params.multi_items()
+            if key != "__democratune_api_path"
+        ]
+        request.scope["query_string"] = urllib.parse.urlencode(
+            query, doseq=True
+        ).encode()
+
+    return await call_next(request)
+
+
 @app.exception_handler(AnyHTTPException)
 async def as_error(request: Request, exc: AnyHTTPException) -> JSONResponse:
     """

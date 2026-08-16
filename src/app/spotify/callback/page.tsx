@@ -22,34 +22,32 @@ export default function SpotifyCallbackPage() {
 
 function Callback() {
     const router = useRouter()
-    const params = useSearchParams()
-    const [authorizationError, setAuthorizationError] = useState<string | null>(
-        null,
-    )
-    const denied = params.get("error")
-    const code = params.get("code")
-    const responseError = denied
+    const searchParams = useSearchParams()
+    const [asyncError, setAsyncError] = useState<string | null>(null)
+    const denied = searchParams.get("error")
+    const code = searchParams.get("code")
+    const authorizationError = denied
         ? denied === "access_denied"
             ? "You didn't grant access, so nothing was exported."
             : `Spotify returned an error: ${denied}`
         : !code
           ? "Spotify didn't send an authorization code."
           : null
-    const error = responseError ?? authorizationError
-
     useEffect(() => {
-        if (!code || denied) return
+        if (authorizationError || !code) return
 
         completeAuthorization(code)
             .then((returnTo) => router.replace(returnTo))
             .catch((cause: unknown) =>
-                setAuthorizationError(
+                setAsyncError(
                     cause instanceof Error
                         ? cause.message
                         : "Couldn't finish connecting to Spotify.",
                 ),
             )
-    }, [code, denied, router])
+    }, [authorizationError, code, router])
+
+    const error = authorizationError ?? asyncError
 
     if (error) {
         return (

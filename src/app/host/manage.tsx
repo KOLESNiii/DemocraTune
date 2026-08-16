@@ -20,7 +20,7 @@ export default function ManageRooms({
 }) {
     const rooms = usePreloadedQuery(preloadedRooms)
     const hasRooms = Boolean(rooms?.length)
-    const [renderedAt] = useState(Date.now)
+    const [now] = useState(() => Date.now())
 
     return (
         <main className="paper-field relative min-h-screen overflow-hidden px-5 py-6 sm:px-10 sm:py-8">
@@ -77,8 +77,7 @@ export default function ManageRooms({
                         <div className="border-ink border-t-2">
                             {rooms?.map((room) => {
                                 const expiresSoon =
-                                    room.expiresAt - renderedAt <
-                                    6 * 60 * 60 * 1000
+                                    room.expiresAt - now < 6 * 60 * 60 * 1000
 
                                 return (
                                     <Link
@@ -103,7 +102,7 @@ export default function ManageRooms({
                                                 Expires{" "}
                                                 {formatDistance(
                                                     new Date(room.expiresAt),
-                                                    renderedAt,
+                                                    now,
                                                     { addSuffix: true },
                                                 )}
                                             </p>

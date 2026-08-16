@@ -45,6 +45,11 @@ describe("SearchSong", () => {
         expect(screen.getByText(/Talking Heads/)).toHaveTextContent(
             "Talking Heads · 4:20",
         )
+        expect(
+            screen.getByRole("button", {
+                name: "Add Once in a Lifetime by Talking Heads",
+            }),
+        ).toBeInTheDocument()
         expect(fetchMock).toHaveBeenCalledWith(
             "/api/search?query=talking%20heads",
             expect.objectContaining({
@@ -55,7 +60,7 @@ describe("SearchSong", () => {
             }),
         )
 
-        await user.click(screen.getByRole("button", { name: "Add song" }))
+        await user.click(screen.getByText("Once in a Lifetime"))
 
         await waitFor(() => {
             expect(onSelect).toHaveBeenCalledWith({
@@ -164,7 +169,9 @@ describe("SearchSong", () => {
             "blocked track",
         )
         await user.click(
-            await screen.findByRole("button", { name: "Add song" }),
+            await screen.findByRole("button", {
+                name: "Add Blocked song by An Artist",
+            }),
         )
 
         expect(

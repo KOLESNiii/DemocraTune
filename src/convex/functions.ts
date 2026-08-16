@@ -25,10 +25,14 @@ triggers.register("rooms", async (ctx, change) => {
     if (change.operation === "delete") {
         console.log("Deleting leftovers from room")
         if (change.oldDoc.playlistId) {
-            ctx.scheduler.runAfter(0, internal.functions.deleteRoomPlaylist, {
-                roomId: change.oldDoc._id,
-                playlistId: change.oldDoc.playlistId,
-            })
+            await ctx.scheduler.runAfter(
+                0,
+                internal.functions.deleteRoomPlaylist,
+                {
+                    roomId: change.oldDoc._id,
+                    playlistId: change.oldDoc.playlistId,
+                },
+            )
         }
         for await (const song of ctx.db
             .query("queuedSongs")
@@ -63,6 +67,15 @@ export const internalMutation = customMutation(
     customCtx(triggers.wrapDB),
 )
 
+function apiUrl(path: string) {
+    const baseUrl = process.env.FASTAPI_BASE_URL
+    if (!baseUrl) {
+        throw new Error("FASTAPI_BASE_URL is not configured")
+    }
+
+    return new URL(path, baseUrl).toString()
+}
+
 export const addSongToPlaylist = internalAction({
     args: {
         roomId: v.id("rooms"),
@@ -76,7 +89,7 @@ export const addSongToPlaylist = internalAction({
             videoId: args.videoId,
             playlistId: args.playlistId,
         }
-        const res = await fetch(`/api/rooms/${args.roomId}/playlist`, {
+        const res = await fetch(apiUrl(`/api/rooms/${args.roomId}/playlist`), {
             method: "POST",
             headers: {
                 "Content-Type": "application/json",
@@ -105,7 +118,7 @@ export const deleteRoomPlaylist = internalAction({
         if (!args.playlistId) return
         const payload = { playlistId: args.playlistId }
         const res = await fetch(
-            `/api/rooms/${args.roomId.toString()}/playlist`,
+            apiUrl(`/api/rooms/${args.roomId.toString()}/playlist`),
             {
                 method: "DELETE",
                 headers: {

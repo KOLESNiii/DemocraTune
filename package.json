@@ -18,7 +18,7 @@
     "test:coverage": "vitest run --coverage",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
-    "vercel-build": "if [ \"$VERCEL_ENV\" = \"production\" ]; then bunx convex deploy --cmd 'bun run build'; else bun run build; fi"
+    "vercel-build": "if [ -n \"${CONVEX_DEPLOY_KEY:-}\" ]; then bunx convex deploy --cmd 'bun run build'; else bun run build; fi"
   },
   "dependencies": {
     "@auth/core": "^0.37.0",
