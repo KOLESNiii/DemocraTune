@@ -1,0 +1,80 @@
+name: Promote develop to production
+
+run-name: Promote ${{ inputs.develop_sha }} to production
+
+on:
+    workflow_dispatch:
+        inputs:
+            develop_sha:
+                description: Full 40-character SHA from the tested develop branch
+                required: true
+                type: string
+
+permissions:
+    contents: read
+
+concurrency:
+    group: production-promotion
+    cancel-in-progress: false
+
+jobs:
+    promote:
+        name: Fast-forward production
+        runs-on: ubuntu-latest
+        timeout-minutes: 5
+
+        steps:
+            - name: Check out develop
+              uses: actions/checkout@v6
+              with:
+                  ref: develop
+                  fetch-depth: 0
+                  persist-credentials: false
+
+            - name: Fetch protected branches
+              run: |
+                  git fetch --no-tags origin \
+                    +refs/heads/develop:refs/remotes/origin/develop \
+                    +refs/heads/production:refs/remotes/origin/production
+
+            - name: Verify the promotion
+              env:
+                  EXPECTED_SHA: ${{ inputs.develop_sha }}
+              run: |
+                  set -euo pipefail
+
+                  if [[ ! "$EXPECTED_SHA" =~ ^[0-9a-fA-F]{40}$ ]]; then
+                    echo "develop_sha must be a full 40-character commit SHA" >&2
+                    exit 1
+                  fi
+
+                  EXPECTED_SHA="${EXPECTED_SHA,,}"
+                  DEVELOP_SHA="$(git rev-parse origin/develop)"
+
+                  if [[ "$EXPECTED_SHA" != "$DEVELOP_SHA" ]]; then
+                    echo "Refusing to promote: develop is currently $DEVELOP_SHA" >&2
+                    exit 1
+                  fi
+
+                  if ! git merge-base --is-ancestor origin/production "$EXPECTED_SHA"; then
+                    echo "Refusing to promote: production is not an ancestor of develop" >&2
+                    exit 1
+                  fi
+
+            - name: Configure the production deploy key
+              env:
+                  PRODUCTION_DEPLOY_KEY: ${{ secrets.PRODUCTION_DEPLOY_KEY }}
+              run: |
+                  set -euo pipefail
+                  install -m 700 -d "$RUNNER_TEMP/democratune-ssh"
+                  printf '%s\n' "$PRODUCTION_DEPLOY_KEY" > "$RUNNER_TEMP/democratune-ssh/key"
+                  chmod 600 "$RUNNER_TEMP/democratune-ssh/key"
+                  ssh-keyscan -H github.com > "$RUNNER_TEMP/democratune-ssh/known_hosts"
+
+            - name: Fast-forward production
+              env:
+                  EXPECTED_SHA: ${{ inputs.develop_sha }}
+                  GIT_SSH_COMMAND: ssh -i "$RUNNER_TEMP/democratune-ssh/key" -o IdentitiesOnly=yes -o UserKnownHostsFile="$RUNNER_TEMP/democratune-ssh/known_hosts"
+              run: |
+                  set -euo pipefail
+                  git push "git@github.com:${GITHUB_REPOSITORY}.git" "${EXPECTED_SHA,,}:refs/heads/production"
