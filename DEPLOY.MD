@@ -72,6 +72,14 @@ read only by Convex actions and must never use a `NEXT_PUBLIC_` prefix. If the
 recommendation variables are absent, AutoDJ network work is disabled and the
 normal user/fallback queues continue to operate.
 
+MusicBrainz catalogue misses are stored in Convex's
+`musicBrainzResolutionQueue`. A singleton scheduler starts at most one request
+every 1.05 seconds deployment-wide, so simultaneous room submissions cannot
+burst through MusicBrainz's one-request-per-second policy. Transient failures
+remain durable and retry after 1.05, 2.1, 4.2, 8.4, then at a capped 10-second
+interval until the service recovers. No additional environment variable or
+Oracle service is required for this queue.
+
 Create a production deploy key in the Convex dashboard under the production
 deployment's settings. Give it the `deployment:deploy` permission and store it
 as the sensitive Vercel environment variable `CONVEX_DEPLOY_KEY`, scoped only

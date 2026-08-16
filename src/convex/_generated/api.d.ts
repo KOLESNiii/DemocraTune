@@ -14,6 +14,7 @@ import type * as exports from "../exports.js";
 import type * as fingerprint from "../fingerprint.js";
 import type * as functions from "../functions.js";
 import type * as http from "../http.js";
+import type * as musicBrainz from "../musicBrainz.js";
 import type * as nicknames from "../nicknames.js";
 import type * as playback from "../playback.js";
 import type * as ratings from "../ratings.js";
@@ -39,6 +40,7 @@ declare const fullApi: ApiFromModules<{
   fingerprint: typeof fingerprint;
   functions: typeof functions;
   http: typeof http;
+  musicBrainz: typeof musicBrainz;
   nicknames: typeof nicknames;
   playback: typeof playback;
   ratings: typeof ratings;

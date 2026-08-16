@@ -274,9 +274,12 @@ The application wiring is implemented in the Convex recommendation actions:
 
 1. Rooms store `autoDj.enabled` and a validated source order; pre-existing
    rooms remain compatible with AutoDJ off.
-2. Accepted songs are upserted into the canonical track catalogue. A scheduled
-   action resolves the recording MBID and calls `POST /v1/jobs`; the accepting
-   mutation never waits on MusicBrainz or the recommendation backend.
+2. Accepted songs are upserted into the canonical track catalogue. Known MBIDs
+   continue immediately; catalogue misses enter a durable, deduplicated Convex
+   queue that starts one MusicBrainz lookup every 1.05 seconds. Transient
+   failures use exponential backoff capped at 10 seconds. Once resolved, a
+   scheduled action calls `POST /v1/jobs`; the accepting mutation never waits
+   on MusicBrainz or the recommendation backend.
 3. A three-song room buffer is stored as lightweight `autoDj` queue entries.
    No embeddings enter Convex.
 4. Playback transitions schedule replenishment from current/recent MBID seeds,

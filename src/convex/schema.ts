@@ -152,6 +152,38 @@ export default defineSchema({
         .index("by_mbid", ["mbid"]),
 
     /**
+     * Durable misses from the local track catalogue. A single entry is shared
+     * by every room occurrence of the same track, so MusicBrainz is queried
+     * once and the result is fanned back out to all waiting songs.
+     */
+    musicBrainzResolutionQueue: defineTable({
+        track: v.id("tracks"),
+        appearances: v.array(
+            v.object({
+                roomId: v.id("rooms"),
+                videoId: v.string(),
+            }),
+        ),
+        status: v.union(v.literal("pending"), v.literal("leased")),
+        attempts: v.number(),
+        nextAttemptAt: v.number(),
+        claimGeneration: v.number(),
+        leaseExpiresAt: v.optional(v.number()),
+        lastError: v.optional(v.string()),
+    })
+        .index("by_track", ["track"])
+        .index("by_status_next_attempt", ["status", "nextAttemptAt"])
+        .index("by_status_lease_expiry", ["status", "leaseExpiresAt"]),
+
+    /** Singleton coordinating request starts and the queue's durable wake-up. */
+    musicBrainzResolutionState: defineTable({
+        key: v.literal("global"),
+        nextRequestAt: v.number(),
+        scheduleGeneration: v.number(),
+        scheduledAt: v.optional(v.number()),
+    }).index("by_key", ["key"]),
+
+    /**
      * Presence. Listeners heartbeat while they have the room page open so the
      * skip threshold can be a share of the people actually in the room rather
      * than of everyone who ever joined.

@@ -19,6 +19,8 @@ directory.
 ```text
 DemocraTune/Convex
        |
+       +-- resolve catalogue misses through a globally rate-limited queue
+       |
        +-- enqueue one job per MBID + pipeline version
        |
        +-- request recommendations with a room-defined source order

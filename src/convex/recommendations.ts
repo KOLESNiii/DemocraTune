@@ -6,18 +6,12 @@ import {
     internalQuery,
     type MutationCtx,
 } from "./_generated/server"
-import { fingerprint } from "./fingerprint"
 import { internalMutation } from "./functions"
 import { recommendationSourceValidator } from "./recommendationSources"
 
-const MUSICBRAINZ_RECORDINGS = "https://musicbrainz.org/ws/2/recording/"
-const MUSICBRAINZ_USER_AGENT =
-    "DemocraTune/0.1 (https://github.com/KOLESNiii/DemocraTune)"
 const AUTO_DJ_BUFFER_SIZE = 3
 const RECENT_SEED_LIMIT = 5
 const RECOMMENDATION_CANDIDATE_LIMIT = 12
-const MUSICBRAINZ_MAX_ATTEMPTS = 3
-const MUSICBRAINZ_RETRY_MS = 1_500
 
 type RecommendationCandidate = {
     recording_mbid: string
@@ -217,7 +211,6 @@ export const resolveAndEnqueue = internalAction({
         roomId: v.id("rooms"),
         trackId: v.id("tracks"),
         videoId: v.string(),
-        attempt: v.optional(v.number()),
     },
     handler: async (ctx, args): Promise<void> => {
         const config = recommendationConfig()
@@ -229,40 +222,19 @@ export const resolveAndEnqueue = internalAction({
         )
         if (!track || track.mbidUnresolvable) return
 
-        let mbid = track.mbid
+        const mbid = track.mbid
         if (!mbid) {
-            try {
-                mbid = await resolveRecordingMbid(track)
-            } catch (error) {
-                console.error("MusicBrainz recording resolution failed", error)
-                const attempt = args.attempt ?? 1
-                if (attempt < MUSICBRAINZ_MAX_ATTEMPTS) {
-                    await ctx.scheduler.runAfter(
-                        MUSICBRAINZ_RETRY_MS * attempt,
-                        internal.recommendations.resolveAndEnqueue,
-                        { ...args, attempt: attempt + 1 },
-                    )
-                }
-                return
-            }
-
-            await ctx.runMutation(internal.recommendations.saveMbid, {
-                roomId: args.roomId,
-                trackId: args.trackId,
-                videoId: args.videoId,
-                mbid,
-                unresolvable: !mbid,
-            })
-            if (!mbid) return
-        } else {
-            await ctx.runMutation(internal.recommendations.saveMbid, {
-                roomId: args.roomId,
-                trackId: args.trackId,
-                videoId: args.videoId,
-                mbid,
-                unresolvable: false,
-            })
+            await ctx.runMutation(internal.musicBrainz.enqueueResolution, args)
+            return
         }
+
+        await ctx.runMutation(internal.recommendations.saveMbid, {
+            roomId: args.roomId,
+            trackId: args.trackId,
+            videoId: args.videoId,
+            mbid,
+            unresolvable: false,
+        })
 
         try {
             await fetchJson(new URL("/v1/jobs", config.url), {
@@ -383,96 +355,6 @@ async function fetchJson(url: URL, init?: RequestInit): Promise<unknown> {
         throw new Error(`${url.pathname} returned ${response.status}`)
     }
     return await response.json()
-}
-
-function escapeLucene(value: string): string {
-    return value.replace(/[+\-&|!(){}\[\]^"~*?:\\/]/g, "\\$&")
-}
-
-async function resolveRecordingMbid(
-    track: Doc<"tracks">,
-): Promise<string | undefined> {
-    const query = track.isrc
-        ? `isrc:${escapeLucene(track.isrc)}`
-        : `recording:"${escapeLucene(track.title)}" AND artist:"${escapeLucene(track.artist)}"`
-    const url = new URL(MUSICBRAINZ_RECORDINGS)
-    url.search = new URLSearchParams({
-        query,
-        fmt: "json",
-        limit: "8",
-    }).toString()
-
-    const body = await fetchJson(url, {
-        headers: {
-            Accept: "application/json",
-            "User-Agent": MUSICBRAINZ_USER_AGENT,
-        },
-    })
-    return chooseRecordingMbid(body, track)
-}
-
-export function chooseRecordingMbid(
-    body: unknown,
-    track: Pick<Doc<"tracks">, "artist" | "title" | "duration">,
-): string | undefined {
-    if (!body || typeof body !== "object") return undefined
-    const recordings = (body as { recordings?: unknown }).recordings
-    if (!Array.isArray(recordings)) return undefined
-
-    const target = fingerprint(track.artist, track.title)
-    const matches = recordings
-        .map((recording) => readMusicBrainzRecording(recording))
-        .filter(
-            (recording): recording is NonNullable<typeof recording> =>
-                !!recording,
-        )
-        .filter((recording) => recording.score >= 80)
-        .filter(
-            (recording) =>
-                recording.length === undefined ||
-                Math.abs(recording.length / 1000 - track.duration) <= 15,
-        )
-        .sort((left, right) => {
-            const leftExact =
-                fingerprint(left.artist, left.title) === target ? 1 : 0
-            const rightExact =
-                fingerprint(right.artist, right.title) === target ? 1 : 0
-            return rightExact - leftExact || right.score - left.score
-        })
-
-    return matches[0]?.id
-}
-
-function readMusicBrainzRecording(value: unknown) {
-    if (!value || typeof value !== "object") return null
-    const row = value as Record<string, unknown>
-    if (typeof row.id !== "string" || typeof row.title !== "string") return null
-
-    const artistCredit = Array.isArray(row["artist-credit"])
-        ? row["artist-credit"]
-        : []
-    const artist = artistCredit
-        .map((credit) => {
-            if (!credit || typeof credit !== "object") return ""
-            const entry = credit as Record<string, unknown>
-            if (typeof entry.name === "string") return entry.name
-            const nested = entry.artist
-            return nested &&
-                typeof nested === "object" &&
-                typeof (nested as Record<string, unknown>).name === "string"
-                ? ((nested as Record<string, unknown>).name as string)
-                : ""
-        })
-        .filter(Boolean)
-        .join(" & ")
-
-    return {
-        id: row.id,
-        title: row.title,
-        artist,
-        score: Number(row.score ?? 0),
-        length: typeof row.length === "number" ? row.length : undefined,
-    }
 }
 
 export function readRecommendationCandidates(

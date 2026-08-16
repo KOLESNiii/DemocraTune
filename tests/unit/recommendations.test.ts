@@ -1,5 +1,10 @@
 import {
     chooseRecordingMbid,
+    MUSICBRAINZ_REQUEST_INTERVAL_MS,
+    MUSICBRAINZ_USER_AGENT,
+    musicBrainzRetryDelay,
+} from "@/convex/musicBrainz"
+import {
     readPlayableSong,
     readRecommendationCandidates,
 } from "@/convex/recommendations"
@@ -62,6 +67,27 @@ describe("chooseRecordingMbid", () => {
                 track,
             ),
         ).toBeUndefined()
+    })
+})
+
+describe("musicBrainzRetryDelay", () => {
+    it("keeps request starts below one per second and identifies the app", () => {
+        expect(MUSICBRAINZ_REQUEST_INTERVAL_MS).toBe(1_050)
+        expect(1_000 / MUSICBRAINZ_REQUEST_INTERVAL_MS).toBeLessThan(1)
+        expect(MUSICBRAINZ_USER_AGENT).toBe(
+            "DemocraTune/0.1 (https://github.com/KOLESNiii/DemocraTune)",
+        )
+    })
+
+    it.each([
+        [1, 1_050],
+        [2, 2_100],
+        [3, 4_200],
+        [4, 8_400],
+        [5, 10_000],
+        [20, 10_000],
+    ])("backs attempt %s off by %sms", (attempt, expected) => {
+        expect(musicBrainzRetryDelay(attempt)).toBe(expected)
     })
 })
 
