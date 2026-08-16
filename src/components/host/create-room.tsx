@@ -34,6 +34,7 @@ export function CreateRoom({ children }: { children?: React.ReactNode }) {
     const [skipPercent, setSkipPercent] = useState(
         Math.round(DEFAULT_SKIP_THRESHOLD * 100),
     )
+    const [autoDjEnabled, setAutoDjEnabled] = useState(true)
     const [loading, setLoading] = useState(false)
 
     const router = useRouter()
@@ -49,6 +50,7 @@ export function CreateRoom({ children }: { children?: React.ReactNode }) {
                 scheduler: scheduler,
                 numSongsToForget: ratingsForget ? ratingsForgetCount : -1,
                 skipThreshold: skipPercent / 100,
+                autoDjEnabled,
                 fallbackSongs: playlist
                     ? playlist.tracks.map((track) => ({
                           videoId: track.videoId,
@@ -98,6 +100,7 @@ export function CreateRoom({ children }: { children?: React.ReactNode }) {
                 maxSongsPerUser: maxSongs,
                 scheduler,
                 skipThreshold: skipPercent / 100,
+                autoDjEnabled,
                 fallbackPlaylist: playlist && {
                     id: playlist.id,
                     title: playlist.title,
@@ -227,6 +230,26 @@ export function CreateRoom({ children }: { children?: React.ReactNode }) {
                             </span>{" "}
                             votes.
                         </p>
+                    </div>
+
+                    <div className="flex flex-col gap-2">
+                        <label className="border-ink flex items-start gap-3 border-y-2 py-3 text-sm font-medium">
+                            <input
+                                type="checkbox"
+                                checked={autoDjEnabled}
+                                onChange={(event) =>
+                                    setAutoDjEnabled(event.target.checked)
+                                }
+                                className="accent-primary mt-0.5 size-4"
+                            />
+                            <span>
+                                Keep music playing with AutoDJ
+                                <span className="text-muted-foreground mt-1 block text-xs font-normal">
+                                    Adds recommendations after listener requests
+                                    and before the fallback playlist.
+                                </span>
+                            </span>
+                        </label>
                     </div>
 
                     <div className="flex flex-col gap-2">

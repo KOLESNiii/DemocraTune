@@ -1,15 +1,23 @@
 import { authTables } from "@convex-dev/auth/server"
 import { defineSchema, defineTable } from "convex/server"
 import { v } from "convex/values"
+import { recommendationSourceValidator } from "./recommendationSources"
 
 // This is a shared object defining the fields for a song.
 const song = {
     addedBy: v.optional(v.id("users")),
     videoId: v.string(),
+    /** MusicBrainz recording identity used by the recommendation service. */
+    mbid: v.optional(v.string()),
+    recommendationSource: v.optional(recommendationSourceValidator),
     // These exact names of types are important
     // because the queue query will use them to sort the songs.
-    // Calling user added songs "addedByUser" places them in front of fallback songs.
-    type: v.union(v.literal("addedByUser"), v.literal("fallback")),
+    // Lexical order gives the scheduler user songs, AutoDJ, then fallback.
+    type: v.union(
+        v.literal("addedByUser"),
+        v.literal("autoDj"),
+        v.literal("fallback"),
+    ),
 
     title: v.string(),
     artist: v.string(),
@@ -55,6 +63,13 @@ export default defineSchema({
             // Fraction of listeners who must vote to skip before the current
             // song is dropped. Absent on rooms created before voting existed.
             skipThreshold: v.optional(v.number()),
+            /** Optional so rooms created before AutoDJ remain valid and off. */
+            autoDj: v.optional(
+                v.object({
+                    enabled: v.boolean(),
+                    sourceOrder: v.array(recommendationSourceValidator),
+                }),
+            ),
         }),
     })
         .index("by_code", ["code"])
@@ -110,6 +125,10 @@ export default defineSchema({
         fingerprint: v.string(),
         /** The industry-standard recording id, when a provider gives us one. */
         isrc: v.optional(v.string()),
+        /** MusicBrainz recording id used as the vector-store identity. */
+        mbid: v.optional(v.string()),
+        mbidResolvedAt: v.optional(v.number()),
+        mbidUnresolvable: v.optional(v.boolean()),
         /** Per-service ids, filled in lazily as resolution succeeds. */
         providerIds: v.object({
             youtube: v.optional(v.string()),
@@ -129,7 +148,8 @@ export default defineSchema({
         unresolvable: v.optional(v.boolean()),
     })
         .index("by_fingerprint", ["fingerprint"])
-        .index("by_isrc", ["isrc"]),
+        .index("by_isrc", ["isrc"])
+        .index("by_mbid", ["mbid"]),
 
     /**
      * Presence. Listeners heartbeat while they have the room page open so the
