@@ -13,6 +13,7 @@ type SearchResult = {
     artists: { name: string }[]
     duration_seconds: number
 }
+
 export function SearchSong({
     onSelect,
     disabled = false,

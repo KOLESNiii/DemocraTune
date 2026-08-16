@@ -19,6 +19,7 @@ export default function SpotifyCallbackPage() {
         </Suspense>
     )
 }
+
 function Callback() {
     const router = useRouter()
     const searchParams = useSearchParams()
