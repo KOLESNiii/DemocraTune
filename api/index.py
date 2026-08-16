@@ -13,10 +13,10 @@ one.
 
 import asyncio
 import os
+import re
 import urllib.error
 import urllib.parse
 import urllib.request
-from concurrent.futures import ThreadPoolExecutor
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request
@@ -34,6 +34,8 @@ load_dotenv(".env.local")
 
 app = FastAPI()
 
+NO_STORE_HEADERS = {"Cache-Control": "no-store"}
+
 
 @app.exception_handler(AnyHTTPException)
 async def as_error(request: Request, exc: AnyHTTPException) -> JSONResponse:
@@ -44,7 +46,11 @@ async def as_error(request: Request, exc: AnyHTTPException) -> JSONResponse:
     frontend reads `.error`, and a mismatch here surfaces to the user as a
     generic "please try again" instead of the real reason.
     """
-    return JSONResponse(status_code=exc.status_code, content={"error": exc.detail})
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"error": exc.detail},
+        headers=NO_STORE_HEADERS,
+    )
 
 
 @app.exception_handler(RequestValidationError)
@@ -61,6 +67,7 @@ async def as_validation_error(
     return JSONResponse(
         status_code=422,
         content={"error": f"Invalid request{f': {fields}' if fields else ''}"},
+        headers=NO_STORE_HEADERS,
     )
 
 
@@ -77,7 +84,9 @@ async def as_json_error(request: Request, exc: Exception) -> JSONResponse:
     """
     print(f"Unhandled error on {request.url.path}: {exc!r}")
     return JSONResponse(
-        status_code=500, content={"error": "Something went wrong on our end."}
+        status_code=500,
+        content={"error": "Something went wrong on our end."},
+        headers=NO_STORE_HEADERS,
     )
 
 
@@ -124,21 +133,46 @@ def authed() -> YTMusic:
 # Search
 # ------------------------------
 
-# How many results to ask YouTube Music for. We over-fetch because a good share
-# of them turn out to be un-embeddable and get dropped by the check below.
-SEARCH_LIMIT = 20
-# How many of the ranked candidates to check. All checks run at once, so this
-# bounds the endpoint at roughly one round trip rather than one per song.
-VERIFY_LIMIT = 12
-# How many verified results to hand back to the client.
+# Search is intentionally cheap: one YouTube Music request on a CDN miss and no
+# playability fan-out. A selected result is checked by `/api/playable/{videoId}`.
+MIN_SEARCH_LENGTH = 3
+SEARCH_LIMIT = 12
 RESULT_LIMIT = 8
 VERIFY_TIMEOUT_SECONDS = 3
+VIDEO_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{11}$")
+
+# Browsers keep repeat searches locally for an hour. Vercel's CDN can serve a
+# query for a day without invoking Python, then continue serving the last good
+# response while refreshing it for up to a week. Query parameters form part of
+# the cache key, and the client sends normalized lowercase terms to maximise
+# hits across users.
+SEARCH_CACHE_HEADERS = {
+    "Cache-Control": "public, max-age=3600, stale-while-revalidate=86400",
+    "CDN-Cache-Control": "public, max-age=86400, stale-while-revalidate=604800",
+    "Vercel-CDN-Cache-Control": (
+        "public, max-age=86400, stale-while-revalidate=604800"
+    ),
+}
+PLAYABLE_CACHE_HEADERS = {
+    "Cache-Control": "public, max-age=3600, stale-while-revalidate=86400",
+    "CDN-Cache-Control": "public, max-age=604800, stale-while-revalidate=2592000",
+    "Vercel-CDN-Cache-Control": (
+        "public, max-age=604800, stale-while-revalidate=2592000"
+    ),
+}
+UNPLAYABLE_CACHE_HEADERS = {
+    "Cache-Control": "public, max-age=300, stale-while-revalidate=3600",
+    "CDN-Cache-Control": "public, max-age=3600, stale-while-revalidate=86400",
+    "Vercel-CDN-Cache-Control": (
+        "public, max-age=3600, stale-while-revalidate=86400"
+    ),
+}
 
 # YouTube Music tags every result with a videoType. The `videos` filter used
 # below returns OMV/UGC in practice, so this ranking is mostly defensive - it
 # keeps ATV "art tracks" last if the filter ever starts surfacing them, since
-# the labels that own those uploads usually disallow embedded playback. The
-# oEmbed check is what actually removes unplayable songs.
+# the labels that own those uploads commonly disallow embedded playback. The
+# selected result still gets the authoritative oEmbed check below.
 VIDEO_TYPE_RANK = {
     "MUSIC_VIDEO_TYPE_OMV": 0,  # official music video
     "MUSIC_VIDEO_TYPE_OFFICIAL_SOURCE_MUSIC": 1,
@@ -150,9 +184,12 @@ UNRANKED = len(VIDEO_TYPE_RANK)
 
 @app.get("/api/search")
 async def search(query: str = "", q: str = ""):
-    term = (query or q).strip()
-    if not term:
-        raise HTTPException(status_code=400, detail="Query is required")
+    term = " ".join((query or q).split()).lower()
+    if len(term) < MIN_SEARCH_LENGTH:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Query must be at least {MIN_SEARCH_LENGTH} characters",
+        )
 
     try:
         raw = await asyncio.to_thread(
@@ -167,12 +204,18 @@ async def search(query: str = "", q: str = ""):
     candidates = [song for song in (normalize(item) for item in raw) if song]
     candidates.sort(key=lambda song: song["_rank"])
 
-    results = await asyncio.to_thread(verify_embeddable, candidates, RESULT_LIMIT)
-
-    for song in results:
+    results = []
+    seen_video_ids = set()
+    for song in candidates:
+        if song["videoId"] in seen_video_ids:
+            continue
+        seen_video_ids.add(song["videoId"])
         song.pop("_rank", None)
+        results.append(song)
+        if len(results) == RESULT_LIMIT:
+            break
 
-    return results
+    return JSONResponse(content=results, headers=SEARCH_CACHE_HEADERS)
 
 
 def normalize(item):
@@ -206,34 +249,21 @@ def normalize(item):
     }
 
 
-def verify_embeddable(candidates, wanted):
-    """
-    Keep only songs that will actually play inside an iframe.
+@app.get("/api/playable/{video_id}")
+async def playable(video_id: str):
+    """Check only the song the user selected, rather than every search hit."""
+    if not VIDEO_ID_PATTERN.fullmatch(video_id):
+        raise HTTPException(status_code=400, detail="Invalid YouTube video ID")
 
-    YouTube's oEmbed endpoint answers 401 when the owner has disabled embedded
-    playback and 404 when the video is private or gone, which is the cheapest
-    way to find out without an API key. Checks run in parallel and in rank
-    order, so we stop as soon as we have enough good results.
-    """
-    if not candidates:
-        return []
-
-    checked = candidates[:VERIFY_LIMIT]
-    with ThreadPoolExecutor(max_workers=len(checked)) as pool:
-        outcomes = list(pool.map(is_embeddable, checked))
-
-    verified = [song for song, ok in zip(checked, outcomes) if ok]
-
-    # If every candidate failed the check the endpoint is probably rate limiting
-    # us rather than the songs all being blocked. Fall back to the ranked list so
-    # search still returns something instead of looking broken.
-    return (verified or checked)[:wanted]
+    can_play = await asyncio.to_thread(is_embeddable, video_id)
+    headers = PLAYABLE_CACHE_HEADERS if can_play else UNPLAYABLE_CACHE_HEADERS
+    return JSONResponse(content={"playable": can_play}, headers=headers)
 
 
-def is_embeddable(song):
+def is_embeddable(video_id: str):
     url = "https://www.youtube.com/oembed?" + urllib.parse.urlencode(
         {
-            "url": f"https://www.youtube.com/watch?v={song['videoId']}",
+            "url": f"https://www.youtube.com/watch?v={video_id}",
             "format": "json",
         }
     )
