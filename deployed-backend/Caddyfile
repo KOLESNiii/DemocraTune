@@ -1,0 +1,5 @@
+{$BACKEND_ADDRESS} {
+    encode zstd gzip
+    reverse_proxy api:8000
+}
+

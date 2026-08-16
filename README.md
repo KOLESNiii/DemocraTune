@@ -4,6 +4,10 @@
 
 **[Try DemocraTune live](https://democratune.timkolesnichenko.me/)** · **[Tim's website](https://www.timkolesnichenko.me/)**
 
+Deployment and hosting instructions are in [`DEPLOY.MD`](DEPLOY.MD). The
+independent recommendation backend has its own runbook in
+[`deployed-backend/DEPLOY.MD`](deployed-backend/DEPLOY.MD).
+
 ## 🎉 What is DemocraTune?
 
 DemocraTune is an open-source, privacy-friendly music queue system. Hosts can control a central screen while everyone else contributes to the playlist simply by scanning a QR code. No logins, no hassle, just music.
