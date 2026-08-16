@@ -169,26 +169,40 @@ export default function Host({
                     </section>
 
                     <aside className="flex min-h-0 flex-col border-t border-white/20 pt-5 lg:border-t-0 lg:border-l lg:pt-0 lg:pl-5">
-                        <div className="flex items-center justify-between border-b-2 border-white/65 pb-4">
+                        <section
+                            aria-labelledby="join-room-heading"
+                            className="grid grid-cols-[minmax(0,1fr)_8rem] items-center gap-4 border-b-2 border-white/65 pb-5 sm:grid-cols-[minmax(0,1fr)_10rem] xl:grid-cols-[minmax(0,1fr)_11rem] 2xl:grid-cols-[minmax(0,1fr)_12rem]"
+                        >
+                            <div className="min-w-0">
+                                <h2
+                                    id="join-room-heading"
+                                    className="font-code text-xs tracking-[0.16em] text-white/55 uppercase"
+                                >
+                                    Join this room
+                                </h2>
+                                <RoomCode
+                                    code={room?.code ?? ""}
+                                    label="Room code"
+                                    className="mt-2 max-w-full [&>span]:text-3xl sm:[&>span]:text-5xl lg:[&>span]:text-3xl xl:[&>span]:text-4xl 2xl:[&>span]:text-5xl"
+                                />
+                                <p className="mt-3 text-xs leading-snug text-white/55 xl:text-sm">
+                                    Scan or visit{" "}
+                                    <b className="break-words text-white">
+                                        {SITE_NAME}
+                                    </b>
+                                </p>
+                            </div>
+                            <div className="aspect-square w-full border-4 border-white bg-white shadow-[7px_7px_0_0_#ff593d]">
+                                <RoomQRCode roomCode={room?.code ?? ""} />
+                            </div>
+                        </section>
+                        <div className="flex items-center justify-between border-b border-white/20 py-4">
                             <h2 className="font-display text-3xl font-extrabold tracking-[-0.04em]">
                                 Up next
                             </h2>
-                            <RoomCode
-                                code={room?.code ?? ""}
-                                label="Join"
-                                className="items-end [&>span:last-child]:text-2xl"
-                            />
                         </div>
                         <Queue roomId={roomId} className="min-h-0 flex-1" />
                         {isDemocraSchedule && <Standings roomId={roomId} />}
-                        <div className="grid grid-cols-[7rem_1fr] items-center gap-4 border-t-2 border-white/65 pt-4">
-                            <RoomQRCode roomCode={room?.code ?? ""} />
-                            <p className="text-sm leading-snug text-white/65">
-                                Scan to join, or visit{" "}
-                                <b className="text-white">{SITE_NAME}</b> and
-                                enter the code above.
-                            </p>
-                        </div>
                     </aside>
                 </div>
 
