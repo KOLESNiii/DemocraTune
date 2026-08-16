@@ -17,6 +17,8 @@ import type * as http from "../http.js";
 import type * as nicknames from "../nicknames.js";
 import type * as playback from "../playback.js";
 import type * as ratings from "../ratings.js";
+import type * as recommendationSources from "../recommendationSources.js";
+import type * as recommendations from "../recommendations.js";
 import type * as rooms from "../rooms.js";
 import type * as rooms_manage from "../rooms/manage.js";
 import type * as scheduling from "../scheduling.js";
@@ -40,6 +42,8 @@ declare const fullApi: ApiFromModules<{
   nicknames: typeof nicknames;
   playback: typeof playback;
   ratings: typeof ratings;
+  recommendationSources: typeof recommendationSources;
+  recommendations: typeof recommendations;
   rooms: typeof rooms;
   "rooms/manage": typeof rooms_manage;
   scheduling: typeof scheduling;

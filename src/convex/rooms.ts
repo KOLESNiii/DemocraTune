@@ -4,7 +4,9 @@ import { Id } from "./_generated/dataModel"
 import { query } from "./_generated/server"
 import { mutation } from "./functions"
 import { advanceRoom } from "./playback"
+import { scheduleRecommendationTrack } from "./recommendations"
 import { attachNicknames, getScheduledQueue } from "./scheduling"
+import { upsertTrack } from "./tracks"
 
 /**
  * This query returns the queue of songs for a room, in the order the room's
@@ -34,15 +36,16 @@ export const getPersonalQueue = query({
     },
     handler: async (ctx, args) => {
         const userId = await getAuthUserId(ctx)
-        if (userId === null)
-            return []
+        if (userId === null) return []
         const queue = await ctx.db
             .query("queuedSongs")
-            .withIndex("by_added_by_room", q => q.eq("addedBy", userId).eq("room", args.roomId))
+            .withIndex("by_added_by_room", (q) =>
+                q.eq("addedBy", userId).eq("room", args.roomId),
+            )
             .order("asc")
             .take(args.numItems ?? 5)
         return await attachNicknames(ctx, queue)
-    }
+    },
 })
 
 export const getRoomByCode = query({
@@ -177,6 +180,13 @@ export const addSong = mutation({
                 duration: args.duration,
             })
         }
+
+        const trackId = await upsertTrack(ctx, args)
+        await scheduleRecommendationTrack(ctx, {
+            roomId: args.roomId,
+            trackId,
+            videoId: args.videoId,
+        })
     },
 })
 
@@ -214,9 +224,7 @@ export const getSongHistory = query(
     async ({ db }, { roomId }: { roomId: Id<"rooms"> }) => {
         const history = await db
             .query("history")
-            .withIndex("by_room", (q) =>
-                q.eq("room", roomId),
-            )
+            .withIndex("by_room", (q) => q.eq("room", roomId))
             .order("desc")
             .collect()
 
@@ -256,13 +264,13 @@ export const getSongHistory = query(
 )
 
 export const setRoomPlaylist = mutation({
-  args: {
-    roomId: v.id("rooms"),
-    playlistId: v.string(),
-  },
-  handler: async ({ db }, { roomId, playlistId }) => {
-    await db.patch(roomId, { playlistId })
-  },
+    args: {
+        roomId: v.id("rooms"),
+        playlistId: v.string(),
+    },
+    handler: async ({ db }, { roomId, playlistId }) => {
+        await db.patch(roomId, { playlistId })
+    },
 })
 
 export const getRoomById = query({
@@ -272,4 +280,3 @@ export const getRoomById = query({
         return room
     },
 })
-
