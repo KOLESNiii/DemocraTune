@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import secrets
 from contextlib import asynccontextmanager
 from typing import Annotated, Any
@@ -20,6 +21,8 @@ from .models import (
     RecommendationRequest,
 )
 from .vector_store import VectorStore
+
+logger = logging.getLogger(__name__)
 
 settings = Settings.from_environment()
 jobs = JobDatabase(settings.state_db_path)
@@ -90,9 +93,17 @@ async def health() -> dict[str, Any]:
 async def enqueue_job(request: EnqueueJobRequest) -> dict[str, Any]:
     pipeline = request.pipeline_version or settings.default_pipeline_version
     mbid = str(request.mbid)
-    exists = await asyncio.to_thread(
-        vectors.has_point, mbid=mbid, pipeline_version=pipeline
-    )
+    try:
+        exists = await asyncio.to_thread(
+            vectors.has_point, mbid=mbid, pipeline_version=pipeline
+        )
+    except Exception:  # noqa: BLE001 - queueing must survive a Qdrant outage
+        logger.exception(
+            "Could not check whether %s already exists in pipeline %s; queueing it",
+            mbid,
+            pipeline,
+        )
+        exists = False
     if exists:
         return {
             "created": False,
@@ -241,13 +252,20 @@ async def recommendations(request: RecommendationRequest) -> dict[str, Any]:
     for source in source_order:
         attempted.append(source)
         if source == "engine":
-            candidates = await asyncio.to_thread(
-                vectors.recommend,
-                seed_mbids=seed_mbids,
-                excluded_mbids=excluded,
-                pipeline_version=pipeline,
-                limit=request.limit,
-            )
+            try:
+                candidates = await asyncio.to_thread(
+                    vectors.recommend,
+                    seed_mbids=seed_mbids,
+                    excluded_mbids=excluded,
+                    pipeline_version=pipeline,
+                    limit=request.limit,
+                )
+            except Exception:  # noqa: BLE001 - fallback sources are the recovery path
+                logger.exception(
+                    "Recommendation engine failed for pipeline %s; trying fallback",
+                    pipeline,
+                )
+                candidates = []
             if candidates:
                 return {
                     "selected_source": "engine",
@@ -256,11 +274,15 @@ async def recommendations(request: RecommendationRequest) -> dict[str, Any]:
                     "candidates": candidates,
                 }
         elif source == "listenbrainz":
-            candidates = await listenbrainz.similar_recordings(
-                seed_mbids=seed_mbids,
-                excluded_mbids=excluded,
-                limit=request.limit,
-            )
+            try:
+                candidates = await listenbrainz.similar_recordings(
+                    seed_mbids=seed_mbids,
+                    excluded_mbids=excluded,
+                    limit=request.limit,
+                )
+            except Exception:  # noqa: BLE001 - the playlist fallback must still run
+                logger.exception("ListenBrainz recommendation fallback failed")
+                candidates = []
             if candidates:
                 return {
                     "selected_source": "listenbrainz",
