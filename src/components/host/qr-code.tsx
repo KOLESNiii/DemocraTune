@@ -15,7 +15,7 @@ export function RoomQRCode({ roomCode }: { roomCode: string }) {
     )
     const url = (() => {
         if (!origin) return ""
-        const roomUrl = new URL(`/room/${roomCode}`, window.location.origin)
+        const roomUrl = new URL(`/room/${roomCode}`, origin)
         roomUrl.searchParams.set("utm_source", "qr-code")
         return roomUrl.toString()
     })()
