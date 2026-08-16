@@ -19,7 +19,6 @@ export default function SpotifyCallbackPage() {
         </Suspense>
     )
 }
-
 function Callback() {
     const router = useRouter()
     const searchParams = useSearchParams()
@@ -33,6 +32,7 @@ function Callback() {
         : !code
           ? "Spotify didn't send an authorization code."
           : null
+
     useEffect(() => {
         if (authorizationError || !code) return
 

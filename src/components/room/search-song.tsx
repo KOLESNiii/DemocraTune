@@ -1,8 +1,8 @@
 "use client"
 
 import { formatDuration } from "@/lib/utils"
-import { LoaderCircleIcon, PlusCircleIcon, SearchXIcon } from "lucide-react"
-import { useEffect, useRef, useState } from "react"
+import { PlusCircleIcon, SearchXIcon } from "lucide-react"
+import { useState } from "react"
 import { ImageWithFallback } from "../image-with-fallback"
 import { Input } from "../ui/input"
 import { SubmitButton } from "../ui/submit-button"
@@ -13,21 +13,6 @@ type SearchResult = {
     artists: { name: string }[]
     duration_seconds: number
 }
-
-const MIN_SEARCH_LENGTH = 3
-const SEARCH_DEBOUNCE_MS = 350
-const SEARCH_CACHE_TTL_MS = 60 * 60 * 1000
-const MAX_CACHED_SEARCHES = 100
-
-const searchCache = new Map<
-    string,
-    { results: SearchResult[]; expiresAt: number }
->()
-
-function normalizeQuery(query: string) {
-    return query.trim().replace(/\s+/g, " ").toLowerCase()
-}
-
 export function SearchSong({
     onSelect,
     disabled = false,
@@ -40,101 +25,48 @@ export function SearchSong({
     }) => Promise<void>
     disabled?: boolean
 }) {
-    const [query, setQuery] = useState("")
     const [results, setResults] = useState<SearchResult[]>([])
     const [error, setError] = useState<string | null>(null)
     const [searched, setSearched] = useState(false)
-    const [searching, setSearching] = useState(false)
-    const requestSequence = useRef(0)
 
-    useEffect(() => {
-        const normalizedQuery = normalizeQuery(query)
-        const requestId = ++requestSequence.current
+    async function handleSearch(formData: FormData) {
+        const query = (formData.get("query") as string)?.trim()
+        if (!query) return
 
         setError(null)
-        if (normalizedQuery.length < MIN_SEARCH_LENGTH) {
-            setResults([])
-            setSearched(false)
-            setSearching(false)
-            return
-        }
+        setSearched(true)
 
-        const cached = searchCache.get(normalizedQuery)
-        if (cached && cached.expiresAt > Date.now()) {
-            setResults(cached.results)
-            setSearched(true)
-            setSearching(false)
-            return
-        }
-        if (cached) searchCache.delete(normalizedQuery)
-
-        const controller = new AbortController()
-        const timer = window.setTimeout(async () => {
-            setSearching(true)
-
-            try {
-                const response = await fetch(
-                    `/api/search?query=${encodeURIComponent(normalizedQuery)}`,
-                    {
-                        signal: controller.signal,
-                        headers: {
-                            "ngrok-skip-browser-warning": "true",
-                        },
+        try {
+            const response = await fetch(
+                `/api/search?query=${encodeURIComponent(query)}`,
+                {
+                    headers: {
+                        "Content-Type": "application/json",
+                        "ngrok-skip-browser-warning": "true",
                     },
-                )
-                const body: unknown = await response.json()
+                },
+            )
+            const body = await response.json()
 
-                if (requestId !== requestSequence.current) return
-
-                // The API answers with `{ error }` on failure, so anything
-                // that isn't an array would blow up the list below.
-                if (!response.ok || !Array.isArray(body)) {
-                    setResults([])
-                    setSearched(true)
-                    setError(
-                        typeof (body as { error?: unknown })?.error === "string"
-                            ? (body as { error: string }).error
-                            : "Failed to search for songs. Please try again.",
-                    )
-                    return
-                }
-
-                const nextResults = body as SearchResult[]
-                if (searchCache.size >= MAX_CACHED_SEARCHES) {
-                    const oldestQuery = searchCache.keys().next().value
-                    if (oldestQuery) searchCache.delete(oldestQuery)
-                }
-                searchCache.set(normalizedQuery, {
-                    results: nextResults,
-                    expiresAt: Date.now() + SEARCH_CACHE_TTL_MS,
-                })
-                setResults(nextResults)
-                setSearched(true)
-            } catch (error) {
-                if (
-                    controller.signal.aborted ||
-                    (error instanceof Error && error.name === "AbortError")
-                ) {
-                    return
-                }
-                if (requestId !== requestSequence.current) return
-
+            // The API answers with `{ error }` on failure, so anything that
+            // isn't an array would blow up the list below.
+            if (!response.ok || !Array.isArray(body)) {
                 setResults([])
-                setSearched(true)
-                setError("Failed to search for songs. Please try again.")
-                console.error(error)
-            } finally {
-                if (requestId === requestSequence.current) {
-                    setSearching(false)
-                }
+                setError(
+                    typeof body?.error === "string"
+                        ? body.error
+                        : "Failed to search for songs. Please try again.",
+                )
+                return
             }
-        }, SEARCH_DEBOUNCE_MS)
 
-        return () => {
-            window.clearTimeout(timer)
-            controller.abort()
+            setResults(body)
+        } catch (error) {
+            setResults([])
+            setError("Failed to search for songs. Please try again.")
+            console.error(error)
         }
-    }, [query])
+    }
 
     async function handleSelectSong(formData: FormData) {
         const song = {
@@ -144,38 +76,7 @@ export function SearchSong({
             duration: Number(formData.get("duration")),
         }
 
-        setError(null)
-
         try {
-            const response = await fetch(
-                `/api/playable/${encodeURIComponent(song.videoId)}`,
-                {
-                    headers: {
-                        "ngrok-skip-browser-warning": "true",
-                    },
-                },
-            )
-            const body: unknown = await response.json()
-
-            if (
-                !response.ok ||
-                typeof body !== "object" ||
-                body === null ||
-                !("playable" in body)
-            ) {
-                throw new Error(
-                    typeof (body as { error?: unknown })?.error === "string"
-                        ? (body as { error: string }).error
-                        : "Could not check whether that song can be played.",
-                )
-            }
-
-            if ((body as { playable: unknown }).playable !== true) {
-                throw new Error(
-                    "That version cannot be played here. Please choose another result.",
-                )
-            }
-
             await onSelect(song)
         } catch (error) {
             setError(
@@ -188,39 +89,32 @@ export function SearchSong({
 
     return (
         <div className="flex min-w-0 flex-col gap-4">
-            <div className="relative">
-                <Input
-                    name="query"
-                    type="search"
-                    value={query}
-                    onChange={(event) => setQuery(event.target.value)}
-                    placeholder="Search title or artist"
-                    autoComplete="off"
-                    minLength={MIN_SEARCH_LENGTH}
-                    disabled={disabled}
-                    className="border-ink bg-paper h-12 rounded-none border-2 pr-12 text-base shadow-none"
-                />
-                {searching && (
-                    <LoaderCircleIcon
-                        aria-label="Searching"
-                        className="text-muted-foreground absolute top-3 right-4 size-6 animate-spin"
+            <form action={handleSearch}>
+                <div className="flex w-full flex-col gap-2 sm:flex-row">
+                    <Input
+                        name="query"
+                        type="search"
+                        placeholder="Search title or artist"
+                        autoComplete="off"
+                        disabled={disabled}
+                        className="border-ink bg-paper h-12 rounded-none border-2 text-base shadow-none"
                     />
-                )}
-            </div>
-            {query.length > 0 &&
-                normalizeQuery(query).length < MIN_SEARCH_LENGTH && (
-                    <p className="text-muted-foreground text-center text-sm">
-                        Type at least {MIN_SEARCH_LENGTH} characters to search.
-                    </p>
-                )}
+                    <SubmitButton
+                        disabled={disabled}
+                        className="border-ink h-12 rounded-none border-2 px-6 font-bold"
+                    >
+                        Search
+                    </SubmitButton>
+                </div>
+            </form>
             {error && (
                 <p className="text-center text-sm text-red-500">{error}</p>
             )}
-            {searched && !searching && !error && results.length === 0 && (
+            {searched && !error && results.length === 0 && (
                 <div className="text-muted-foreground flex flex-col items-center gap-2 py-6">
                     <SearchXIcon className="size-6" />
                     <p className="text-sm">
-                        Nothing found. Try a different search.
+                        Nothing playable found. Try a different search.
                     </p>
                 </div>
             )}
