@@ -169,13 +169,13 @@ not something to place on Oracle or in Convex.
 
 Recommended data placement:
 
-| Data | Location | Availability requirement |
-| --- | --- | --- |
-| Raw AcousticBrainz archives | Home PC bulk disk + backup if valuable | Offline is acceptable |
-| Compact derived AB vectors | Oracle Qdrant | Always available |
-| Demand-created modern embeddings | Oracle Qdrant | Always available |
-| Extraction queue | Oracle SQLite volume | Always available |
-| Temporary source audio | Home worker temp directory | Deleted after each attempt |
+| Data                             | Location                               | Availability requirement   |
+| -------------------------------- | -------------------------------------- | -------------------------- |
+| Raw AcousticBrainz archives      | Home PC bulk disk + backup if valuable | Offline is acceptable      |
+| Compact derived AB vectors       | Oracle Qdrant                          | Always available           |
+| Demand-created modern embeddings | Oracle Qdrant                          | Always available           |
+| Extraction queue                 | Oracle SQLite volume                   | Always available           |
+| Temporary source audio           | Home worker temp directory             | Deleted after each attempt |
 
 Do not mirror the raw database merely because it exists. First download the
 compact CSV or only the required archives, verify checksums, and build a
@@ -185,11 +185,11 @@ is itself a goal and there is a second copy or reproducible download path.
 For a full historical import, start with a compact 128-dimensional derived
 vector. Approximate storage for 7.56 million recordings is:
 
-| Representation | Raw float32 values | Practical Qdrant budget |
-| --- | ---: | ---: |
-| 128 dimensions | 3.9 GB | roughly 10–30 GB |
-| 256 dimensions | 7.7 GB | roughly 20–50 GB |
-| 1,280 dimensions | 38.7 GB | roughly 60–150+ GB |
+| Representation   | Raw float32 values | Practical Qdrant budget |
+| ---------------- | -----------------: | ----------------------: |
+| 128 dimensions   |             3.9 GB |        roughly 10–30 GB |
+| 256 dimensions   |             7.7 GB |        roughly 20–50 GB |
+| 1,280 dimensions |            38.7 GB |      roughly 60–150+ GB |
 
 Those practical estimates include index, payload, metadata, and operational
 headroom, not just vector values. The deployed Qdrant config uses on-disk
@@ -268,24 +268,26 @@ Convex scheduler choose a host fallback track.
 External recommendation failure is normal. Playback must never wait for the
 home worker, Qdrant, ListenBrainz, MusicBrainz, or YouTube search.
 
-## 9. Application integration work
+## 9. Application integration
 
-The deployed backend is implemented; these product-facing steps remain to wire
-it into the current Convex application:
+The application wiring is implemented in the Convex recommendation actions:
 
-1. Extend room settings with `autoDj.enabled` and validated `sourceOrder`.
-2. Add optional canonical MBID and embedding status/version fields to tracks.
-3. After a song is accepted, schedule an action that resolves its MBID and
-   calls `POST /v1/jobs` without blocking the mutation.
-4. Add a room-scoped recommendation buffer containing only lightweight
-   candidates and expiry/status metadata—not vectors.
-5. When playback starts, schedule a refresh action using recent room history.
-6. Resolve returned MBIDs to YouTube candidates, apply the existing playability
-   check, and save 3–5 prepared tracks.
-7. In the playback transition, preserve the ordering: user queue first, then
-   prepared Auto DJ candidate, then host fallback.
-8. Add host controls for enabling Auto DJ and reordering the three sources.
-9. Label Auto DJ entries and record skips/downvotes as evaluation events.
+1. Rooms store `autoDj.enabled` and a validated source order; pre-existing
+   rooms remain compatible with AutoDJ off.
+2. Accepted songs are upserted into the canonical track catalogue. A scheduled
+   action resolves the recording MBID and calls `POST /v1/jobs`; the accepting
+   mutation never waits on MusicBrainz or the recommendation backend.
+3. A three-song room buffer is stored as lightweight `autoDj` queue entries.
+   No embeddings enter Convex.
+4. Playback transitions schedule replenishment from current/recent MBID seeds,
+   excluding room history and every queued/current recording.
+5. Returned candidates pass through the existing `/api/search` playability
+   checks before entering the queue.
+6. Every scheduler preserves user queue first, AutoDJ second, host fallback
+   last.
+7. Hosts can enable or disable AutoDJ when creating a room. Source order is
+   stored now; a reorder control and explicit AutoDJ labels/quality analytics
+   remain follow-up product work rather than expanding this backend PR.
 
 Keep actions time-bounded. A coordinator outage should mark the refresh as
 temporarily unavailable and allow the next scheduled refresh to retry.

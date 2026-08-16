@@ -97,8 +97,11 @@ curl -X POST https://your-domain.example/v1/recommendations \
   }'
 ```
 
-The app token belongs in Convex server-side environment variables, never in a
-browser bundle.
+The app token belongs in Convex as `RECOMMENDATION_API_TOKEN`, alongside the
+backend origin in `RECOMMENDATION_API_URL`. It must never enter a browser
+bundle. Convex also needs `FASTAPI_BASE_URL` pointing at the main Vercel origin
+so returned recording candidates can pass through the existing verified
+`/api/search` adapter before entering a room queue.
 
 ## Storage model
 
@@ -109,11 +112,11 @@ collection instead.
 Qdrant is configured for on-disk vectors, an on-disk HNSW index, and scalar
 quantization. Approximate raw vector sizes for 7.56 million recordings are:
 
-| Vector | Raw float32 values | Practical collection budget |
-| --- | ---: | ---: |
-| 128-dimensional AcousticBrainz derivative | 3.9 GB | roughly 10-30 GB |
-| 256-dimensional derivative | 7.7 GB | roughly 20-50 GB |
-| 1280-dimensional modern embedding | 38.7 GB | roughly 60-150+ GB |
+| Vector                                    | Raw float32 values | Practical collection budget |
+| ----------------------------------------- | -----------------: | --------------------------: |
+| 128-dimensional AcousticBrainz derivative |             3.9 GB |            roughly 10-30 GB |
+| 256-dimensional derivative                |             7.7 GB |            roughly 20-50 GB |
+| 1280-dimensional modern embedding         |            38.7 GB |          roughly 60-150+ GB |
 
 The full modern collection is therefore not the first import target. Keep the
 complete compact AcousticBrainz-derived collection online and grow modern

@@ -100,9 +100,10 @@ Edit `.env` and replace every placeholder. Never commit this file.
 | `ARM_WORKER_CPUS`               | Start at `1.0`.                                                  |
 | `ARM_WORKER_MEMORY`             | Start at `4g`.                                                   |
 
-Do not reuse the app, worker, or Qdrant tokens. The app token must eventually
-be stored only in the trusted Convex/server environment, never in a browser
-bundle.
+Do not reuse the app, worker, or Qdrant tokens. Store the app token as
+`RECOMMENDATION_API_TOKEN` in the trusted Convex environment, with this
+service's HTTPS origin as `RECOMMENDATION_API_URL`. Never place either value in
+a browser bundle.
 
 Validate interpolation before building:
 

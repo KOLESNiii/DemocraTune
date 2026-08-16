@@ -15,10 +15,12 @@ The recommendation and audio-extraction stack is independent. Its runbook is
 ```text
 Browser
   |
-  +-- Vercel: Next.js frontend
-  +-- Vercel: /api/search and /api/playable/* Python function
+  +-- Vercel: Next.js frontend and /api/search Python function
   |
   +-- Convex: rooms, queue, votes, playback, auth, crons
+        |
+        +-- Recommendation backend: jobs and candidates
+        +-- Vercel /api/search: playable YouTube resolution
 ```
 
 The browser and Python search function share an origin, so no CORS
@@ -55,6 +57,20 @@ bunx @convex-dev/auth --prod
 
 Those two values belong to the Convex deployment, not Vercel. Do not copy them
 into `NEXT_PUBLIC_*` variables.
+
+Configure the server-only application endpoints in each Convex deployment that
+should run AutoDJ:
+
+| Variable                   | Required value                                                                   |
+| -------------------------- | -------------------------------------------------------------------------------- |
+| `FASTAPI_BASE_URL`         | The Vercel app's HTTPS origin, used to resolve candidates through `/api/search`. |
+| `RECOMMENDATION_API_URL`   | The public HTTPS origin from `deployed-backend/DEPLOY.MD`.                       |
+| `RECOMMENDATION_API_TOKEN` | Exactly the backend's `APP_API_TOKEN`; mark it sensitive.                        |
+
+Set these in the Convex dashboard's environment-variable settings. They are
+read only by Convex actions and must never use a `NEXT_PUBLIC_` prefix. If the
+recommendation variables are absent, AutoDJ network work is disabled and the
+normal user/fallback queues continue to operate.
 
 Create a production deploy key in the Convex dashboard under the production
 deployment's settings. Give it the `deployment:deploy` permission and store it
