@@ -36,7 +36,23 @@ export function History({
                     {historySongs.length > 0 ? (
                         historySongs.map((song) => (
                             <li key={song.id}>
-                                <SongCard song={song} tone="light" />
+                                <SongCard
+                                    song={song}
+                                    tone="light"
+                                    onOpen={() => {
+                                        const href =
+                                            song.links?.youtubeMusic ??
+                                            song.links?.spotify ??
+                                            song.links?.appleMusic ??
+                                            song.links?.odesli ??
+                                            `https://music.youtube.com/watch?v=${song.videoId}`
+                                        window.open(
+                                            href,
+                                            "_blank",
+                                            "noopener,noreferrer",
+                                        )
+                                    }}
+                                />
                             </li>
                         ))
                     ) : (

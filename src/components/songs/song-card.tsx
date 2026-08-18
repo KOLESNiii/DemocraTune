@@ -18,10 +18,18 @@ export type SongView = {
 export function SongCard({
     song,
     tone = "dark",
+    onOpen,
 }: {
     song: SongView
     tone?: "dark" | "light"
+    onOpen?: () => void
 }) {
+    function handleKeyDown(event: React.KeyboardEvent<HTMLDivElement>) {
+        if (!onOpen || (event.key !== "Enter" && event.key !== " ")) return
+        event.preventDefault()
+        onOpen()
+    }
+
     return (
         <div
             className={cn(
@@ -30,7 +38,10 @@ export function SongCard({
                     ? "border-white/15 hover:bg-white/5"
                     : "border-ink/20 hover:bg-white/40",
             )}
-            // onClick={onClick}
+            onClick={onOpen}
+            onKeyDown={handleKeyDown}
+            role={onOpen ? "link" : undefined}
+            tabIndex={onOpen ? 0 : undefined}
         >
             <ImageWithFallback
                 src={`https://i.ytimg.com/vi_webp/${song.videoId}/mqdefault.webp`}
@@ -56,6 +67,7 @@ export function SongCard({
                     links={song.links}
                     tone={tone}
                     className="mt-1.5"
+                    onClick={(event) => event.stopPropagation()}
                 />
             </div>
             <div className="min-w-0 shrink-0">
