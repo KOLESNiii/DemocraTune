@@ -25,7 +25,7 @@ export function SongCard({
     return (
         <div
             className={cn(
-                "group relative flex items-center justify-between gap-4 border-b py-3 transition-colors",
+                "group relative flex min-w-0 items-center justify-between gap-3 border-b py-3 transition-colors sm:gap-4",
                 tone === "dark"
                     ? "border-white/15 hover:bg-white/5"
                     : "border-ink/20 hover:bg-white/40",
@@ -58,11 +58,11 @@ export function SongCard({
                     className="mt-1.5"
                 />
             </div>
-            <div>
+            <div className="min-w-0 shrink-0">
                 {song.addedByNickname && (
                     <p
                         className={cn(
-                            "text-right text-xs text-nowrap sm:text-sm",
+                            "max-w-24 truncate text-right text-xs sm:max-w-36 sm:text-sm",
                             tone === "dark" ? "text-white/55" : "text-ink/50",
                         )}
                     >

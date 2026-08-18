@@ -1,7 +1,8 @@
 import { getAuthUserId } from "@convex-dev/auth/server"
 import { v } from "convex/values"
-import { Id } from "./_generated/dataModel"
+import { Doc, Id } from "./_generated/dataModel"
 import { query } from "./_generated/server"
+import type { MutationCtx } from "./_generated/server"
 import { mutation } from "./functions"
 import { advanceRoom } from "./playback"
 import { attachNicknames, getScheduledQueue } from "./scheduling"
@@ -40,8 +41,9 @@ export const getPersonalQueue = query({
             .query("queuedSongs")
             .withIndex("by_added_by_room", q => q.eq("addedBy", userId).eq("room", args.roomId))
             .order("asc")
-            .take(args.numItems ?? 5)
-        return await attachNicknames(ctx, queue)
+            .collect()
+        const ordered = orderPersonalQueue(queue)
+        return await attachNicknames(ctx, ordered.slice(0, args.numItems ?? 5))
     }
 })
 
@@ -166,9 +168,14 @@ export const addSong = mutation({
                 },
             })
         } else {
+            const lastPosition = userSongs.reduce(
+                (max, song) => Math.max(max, song.userQueuePosition ?? -1),
+                -1,
+            )
             // room currently has a song playing, so this song should be queued
             await ctx.db.insert("queuedSongs", {
                 room: args.roomId,
+                userQueuePosition: lastPosition + 1,
                 videoId: args.videoId,
                 type: "addedByUser",
                 addedBy: userId as Id<"users">,
@@ -177,6 +184,85 @@ export const addSong = mutation({
                 duration: args.duration,
             })
         }
+    },
+})
+
+function orderPersonalQueue(songs: Doc<"queuedSongs">[]) {
+    return [...songs].sort(
+        (a, b) =>
+            (a.userQueuePosition ?? Number.MAX_SAFE_INTEGER) -
+                (b.userQueuePosition ?? Number.MAX_SAFE_INTEGER) ||
+            a._creationTime - b._creationTime,
+    )
+}
+
+async function getOwnedQueuedSong(
+    ctx: MutationCtx,
+    songId: Id<"queuedSongs">,
+) {
+    const userId = await getAuthUserId(ctx)
+    if (!userId) throw new Error("You need to join the room first")
+
+    const song = await ctx.db.get(songId)
+    if (!song || song.addedBy !== userId) {
+        throw new Error("That song is not in your queue")
+    }
+
+    return { song, userId: userId as Id<"users"> }
+}
+
+async function rewriteUserQueue(
+    ctx: MutationCtx,
+    songs: Doc<"queuedSongs">[],
+) {
+    const ordered = orderPersonalQueue(songs)
+    for (const [position, song] of ordered.entries()) {
+        if (song.userQueuePosition !== position) {
+            await ctx.db.patch(song._id, { userQueuePosition: position })
+        }
+    }
+}
+
+export const removeFromQueue = mutation({
+    args: { songId: v.id("queuedSongs") },
+    handler: async (ctx, { songId }) => {
+        const { song, userId } = await getOwnedQueuedSong(ctx, songId)
+        await ctx.db.delete(song._id)
+        const remaining = await ctx.db
+            .query("queuedSongs")
+            .withIndex("by_added_by_room", (q) =>
+                q.eq("addedBy", userId).eq("room", song.room),
+            )
+            .collect()
+        await rewriteUserQueue(ctx, remaining)
+    },
+})
+
+export const moveInQueue = mutation({
+    args: {
+        songId: v.id("queuedSongs"),
+        direction: v.union(v.literal("up"), v.literal("down")),
+    },
+    handler: async (ctx, { songId, direction }) => {
+        const { song, userId } = await getOwnedQueuedSong(ctx, songId)
+        const songs = await ctx.db
+            .query("queuedSongs")
+            .withIndex("by_added_by_room", (q) =>
+                q.eq("addedBy", userId).eq("room", song.room),
+            )
+            .collect()
+        const ordered = orderPersonalQueue(songs)
+        const currentIndex = ordered.findIndex((item) => item._id === songId)
+        const targetIndex =
+            direction === "up" ? currentIndex - 1 : currentIndex + 1
+        if (currentIndex < 0 || targetIndex < 0 || targetIndex >= ordered.length) {
+            return
+        }
+        ;[ordered[currentIndex], ordered[targetIndex]] = [
+            ordered[targetIndex],
+            ordered[currentIndex],
+        ]
+        await rewriteUserQueue(ctx, ordered)
     },
 })
 
@@ -272,4 +358,3 @@ export const getRoomById = query({
         return room
     },
 })
-

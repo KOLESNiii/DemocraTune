@@ -32,7 +32,7 @@ export function History({
     return (
         <div className="flex flex-col gap-2">
             <ScrollArea className="border-ink mt-3 h-[420px] border-y-2">
-                <ul ref={animationParent}>
+                <ul ref={animationParent} className="min-w-0 px-3 sm:px-0">
                     {historySongs.length > 0 ? (
                         historySongs.map((song) => (
                             <li key={song.id}>
