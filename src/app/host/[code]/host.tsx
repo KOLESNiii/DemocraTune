@@ -76,10 +76,10 @@ export default function Host({
     const isDemocraSchedule = room?.settings?.scheduler === "weighted"
 
     return (
-        <div className="bg-night relative min-h-[100svh] overflow-x-hidden p-4 text-white lg:h-screen lg:overflow-hidden lg:p-5">
+        <div className="bg-night relative h-[100dvh] min-h-0 w-screen overflow-hidden p-3 text-white sm:p-4 lg:p-5">
             <HostBackground videoId={currentSong?.videoId} />
 
-            <main className="relative z-10 min-h-[calc(100svh-2rem)] lg:h-full lg:min-h-0">
+            <main className="relative z-10 h-full min-h-0">
                 <div
                     className={cn(
                         "grid h-full min-h-0 grid-cols-1 gap-5 lg:grid-cols-[minmax(0,2fr)_minmax(22rem,0.78fr)]",
@@ -87,7 +87,7 @@ export default function Host({
                     )}
                 >
                     <section className="flex min-h-0 flex-col">
-                        <div className="relative aspect-video w-full overflow-hidden border-2 border-white/35 bg-black shadow-2xl">
+                        <div className="relative aspect-video w-full shrink-0 overflow-hidden border-2 border-white/35 bg-black shadow-2xl">
                             <HostPlayer
                                 song={currentSong}
                                 onAdvance={advance}

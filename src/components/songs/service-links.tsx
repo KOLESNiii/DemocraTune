@@ -47,7 +47,7 @@ export function ServiceLinks({
     )
     const page = links[ODESLI_PAGE_KEY]
 
-    if (named.length === 0) return null
+    if (named.length === 0 && !page) return null
 
     return (
         <div className={cn("flex flex-wrap items-center gap-1.5", className)}>
