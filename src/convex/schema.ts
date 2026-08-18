@@ -6,10 +6,25 @@ import { v } from "convex/values"
 const song = {
     addedBy: v.optional(v.id("users")),
     videoId: v.string(),
+    // Compatibility fields written by the AutoDJ branch. They are optional
+    // here because this branch does not run the recommendation engine, but
+    // the shared Convex deployment may already contain those documents.
+    mbid: v.optional(v.string()),
+    recommendationSource: v.optional(
+        v.union(
+            v.literal("engine"),
+            v.literal("listenbrainz"),
+            v.literal("fallback_playlist"),
+        ),
+    ),
     // These exact names of types are important
     // because the queue query will use them to sort the songs.
     // Calling user added songs "addedByUser" places them in front of fallback songs.
-    type: v.union(v.literal("addedByUser"), v.literal("fallback")),
+    type: v.union(
+        v.literal("addedByUser"),
+        v.literal("autoDj"),
+        v.literal("fallback"),
+    ),
 
     title: v.string(),
     artist: v.string(),
@@ -55,6 +70,20 @@ export default defineSchema({
             // Fraction of listeners who must vote to skip before the current
             // song is dropped. Absent on rooms created before voting existed.
             skipThreshold: v.optional(v.number()),
+            // Compatibility with rooms created by the recommendation-engine
+            // branch. This branch leaves AutoDJ behaviour unmanaged.
+            autoDj: v.optional(
+                v.object({
+                    enabled: v.boolean(),
+                    sourceOrder: v.array(
+                        v.union(
+                            v.literal("engine"),
+                            v.literal("listenbrainz"),
+                            v.literal("fallback_playlist"),
+                        ),
+                    ),
+                }),
+            ),
         }),
     })
         .index("by_code", ["code"])
