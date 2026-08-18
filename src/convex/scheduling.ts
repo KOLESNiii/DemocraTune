@@ -65,7 +65,22 @@ function bucketByUser(songs: Doc<"queuedSongs">[]): {
         else userQueues.set(key, [song])
     }
 
+    for (const songsForUser of userQueues.values()) {
+        songsForUser.sort(compareUserQueuePosition)
+    }
+
     return { userQueues, fallback }
+}
+
+function compareUserQueuePosition(
+    a: Doc<"queuedSongs">,
+    b: Doc<"queuedSongs">,
+) {
+    return (
+        (a.userQueuePosition ?? Number.MAX_SAFE_INTEGER) -
+            (b.userQueuePosition ?? Number.MAX_SAFE_INTEGER) ||
+        a._creationTime - b._creationTime
+    )
 }
 
 /**
@@ -76,11 +91,20 @@ export async function fcfsQueue(
     roomId: Id<"rooms">,
     numItems: number,
 ): Promise<Doc<"queuedSongs">[]> {
-    return await ctx.db
+    const songs = await ctx.db
         .query("queuedSongs")
         .withIndex("by_room_type", (q) => q.eq("room", roomId))
         .order("asc")
-        .take(numItems)
+        .collect()
+
+    const { userQueues } = bucketByUser(songs)
+    const nextByUser = new Map(userQueues)
+    const ordered = songs.map((song) => {
+        if (song.type === "fallback") return song
+        const next = nextByUser.get(song.addedBy ?? ANONYMOUS)?.shift()
+        return next ?? song
+    })
+    return ordered.slice(0, numItems)
 }
 
 /**
