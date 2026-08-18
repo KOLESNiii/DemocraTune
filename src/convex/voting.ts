@@ -104,6 +104,8 @@ export const getCurrentSongVotes = query({
             // scheduling weight - and, now that a downvote skips, let them
             // fast-forward their own queue.
             canVote: Boolean(userId) && room.currentSong.addedBy !== userId,
+            canSkipOwnSong:
+                Boolean(userId) && room.currentSong.addedBy === userId,
         }
     },
 })
@@ -189,6 +191,30 @@ export const voteOnCurrentSong = mutation({
         }
 
         return { skipped: false, likes, dislikes, required }
+    },
+})
+
+/** Lets the person who queued the current song move on without casting a vote. */
+export const skipOwnSong = mutation({
+    args: {
+        roomId: v.id("rooms"),
+        videoId: v.string(),
+    },
+    handler: async (ctx, { roomId, videoId }) => {
+        const userId = await getAuthUserId(ctx)
+        if (!userId) throw new Error("You need to join the room before skipping")
+
+        const room = await ctx.db.get(roomId)
+        if (!room) throw new Error("Room not found")
+        if (room.currentSong?.videoId !== videoId) {
+            return { skipped: false }
+        }
+        if (room.currentSong.addedBy !== userId) {
+            throw new Error("Only the person who added this song can self-skip it")
+        }
+
+        await advanceRoom(ctx, roomId)
+        return { skipped: true }
     },
 })
 

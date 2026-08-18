@@ -5,7 +5,7 @@ import { Id } from "@/convex/_generated/dataModel"
 import { useAuthedMutation } from "@/lib/auth"
 import { cn } from "@/lib/utils"
 import { useQuery } from "convex/react"
-import { ThumbsDownIcon, ThumbsUpIcon } from "lucide-react"
+import { SkipForwardIcon, ThumbsDownIcon, ThumbsUpIcon } from "lucide-react"
 import { useState } from "react"
 import { toast } from "sonner"
 import { QuorumMeter } from "../ui/quorum-meter"
@@ -27,6 +27,7 @@ export function VoteControls({
 }) {
     const votes = useQuery(api.voting.getCurrentSongVotes, { roomId })
     const vote = useAuthedMutation(api.voting.voteOnCurrentSong)
+    const skipOwnSong = useAuthedMutation(api.voting.skipOwnSong)
 
     const [pending, setPending] = useState(false)
 
@@ -46,10 +47,27 @@ export function VoteControls({
         }
     }
 
+    async function skipOwn() {
+        setPending(true)
+        try {
+            await skipOwnSong({ roomId, videoId })
+            toast.success("Skipped your song")
+        } catch (error) {
+            toast.error(
+                error instanceof Error
+                    ? error.message
+                    : "The song could not be skipped",
+            )
+        } finally {
+            setPending(false)
+        }
+    }
+
     const canVote = votes?.canVote ?? false
     const myVote = votes?.myVote ?? null
     const dislikes = votes?.dislikes ?? 0
     const required = votes?.required ?? 0
+    const canSkipOwnSong = votes?.canSkipOwnSong ?? false
 
     // One more downvote ends it. Worth saying out loud before someone taps.
     const onTheBrink = required > 0 && dislikes === required - 1
@@ -94,6 +112,18 @@ export function VoteControls({
                     />
                 )}
             </div>
+
+            {canSkipOwnSong && (
+                <button
+                    type="button"
+                    onClick={() => void skipOwn()}
+                    disabled={pending}
+                    className="border-ink/35 hover:bg-ink hover:text-paper flex items-center justify-center gap-2 border-2 px-3 py-2 text-sm font-bold transition-colors disabled:pointer-events-none disabled:opacity-50"
+                >
+                    <SkipForwardIcon className="size-4" />
+                    Skip my song
+                </button>
+            )}
 
             {votes && !canVote && (
                 <p className="text-ink/55 text-xs">
