@@ -88,6 +88,46 @@ class VectorStoreTests(unittest.TestCase):
         # Weights 1 (older) and 2 (newer): the newer seed dominates.
         self.assertAlmostEqual(y / x, 2.0)
 
+    def test_recommend_asks_qdrant_to_skip_exclusions(self) -> None:
+        captured: dict[str, Any] = {}
+        original = self.client.query_points
+
+        def query_points(**kwargs: Any) -> Any:
+            captured.update(kwargs)
+            return original(**kwargs)
+
+        self.client.query_points = query_points
+        self.store.recommend(
+            seed_mbids=[SEED],
+            excluded_mbids={EXCLUDED},
+            pipeline_version="test-v1",
+            limit=5,
+        )
+        condition = captured["query_filter"].must_not[0]
+        self.assertEqual(set(condition.has_id), {SEED, EXCLUDED})
+
+    def test_losing_the_race_to_create_a_collection_is_fine(self) -> None:
+        created = {"exists": False}
+
+        def collection_exists(_: str) -> bool:
+            return created["exists"]
+
+        def create_collection(**_: Any) -> None:
+            # Another completion created it a moment earlier.
+            created["exists"] = True
+            raise RuntimeError("collection already exists")
+
+        self.client.collection_exists = collection_exists
+        self.client.create_collection = create_collection
+        self.store.ensure_collection("test-v1", 2)
+
+        created["exists"] = False
+        self.client.create_collection = lambda **_: (_ for _ in ()).throw(
+            RuntimeError("qdrant down")
+        )
+        with self.assertRaises(RuntimeError):
+            self.store.ensure_collection("test-v2", 2)
+
 
 if __name__ == "__main__":
     unittest.main()

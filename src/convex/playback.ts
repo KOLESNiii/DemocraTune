@@ -5,7 +5,7 @@ import type { MutationCtx } from "./_generated/server"
 import { internalMutation } from "./functions"
 import { tallyVoteDocs } from "./ratings"
 import { scheduleRecommendationTrack } from "./recommendations"
-import { chooseNextSong } from "./scheduling"
+import { bootstrapFairShare, chooseNextSong } from "./scheduling"
 import { upsertTrack } from "./tracks"
 
 /**
@@ -51,15 +51,27 @@ export async function advanceRoom(
             // night can be exported somewhere else later.
             track: trackId,
         })
-        await scheduleRecommendationTrack(ctx, {
-            roomId,
-            trackId,
-            videoId: oldSong.videoId,
-        })
+        // People's songs were sent for recommendation indexing when they were
+        // added. AutoDJ and fallback songs never went through `addSong`, so
+        // this is their only chance. advanceRoom refreshes AutoDJ itself.
+        if (oldSong.type !== "addedByUser") {
+            await scheduleRecommendationTrack(ctx, {
+                roomId,
+                trackId,
+                videoId: oldSong.videoId,
+                mbid: oldSong.mbid,
+                refresh: false,
+            })
+        }
 
         for (const vote of votes) {
             await ctx.db.delete(vote._id)
         }
+
+        // A room that was already playing before turn tracking existed hasn't
+        // charged whoever is on now. Do that first, so they don't go again.
+        const fairShare = await bootstrapFairShare(ctx, room)
+        if (fairShare) await ctx.db.patch(roomId, { fairShare })
 
         // The old song is history now. Take it off the room before choosing,
         // or its owner's rating would count it twice (once as the current

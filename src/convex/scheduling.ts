@@ -195,11 +195,11 @@ async function fairShareOrder(
 ): Promise<Doc<"queuedSongs">[]> {
     const { userQueues, autoDj, fallback } = bucketByUser(songs)
     const contenders = await contendersFor(ctx, room, userQueues)
-    const turns = planTurns(
-        room.fairShare ?? EMPTY_FAIR_SHARE,
-        contenders,
-        numItems,
-    )
+    const state =
+        room.fairShare ??
+        (await bootstrapFairShare(ctx, room)) ??
+        EMPTY_FAIR_SHARE
+    const turns = planTurns(state, contenders, numItems)
 
     const ordered = turns.map((id) => userQueues.get(id)!.shift()!)
 
@@ -314,4 +314,22 @@ export async function chargeDirectPlay(
     const state = room.fairShare ?? EMPTY_FAIR_SHARE
     const turn = nextTurn(state, contenders)!
     return recordTurn(state, turn, contenders)
+}
+
+/**
+ * Turn state for a room that has none yet but is already playing someone's
+ * song, as rooms open when turn tracking shipped are. That song counts as its
+ * owner's turn, exactly as if it had been recorded when it started.
+ *
+ * Returns undefined when the room already has state or there's nothing to
+ * charge.
+ */
+export async function bootstrapFairShare(
+    ctx: QueryCtx,
+    room: Doc<"rooms">,
+): Promise<FairShareState | undefined> {
+    if (room.fairShare) return undefined
+    const current = room.currentSong
+    if (current?.type !== "addedByUser" || !current.addedBy) return undefined
+    return chargeDirectPlay(ctx, room, current.addedBy)
 }

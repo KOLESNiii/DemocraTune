@@ -11,6 +11,8 @@ import { recommendationSourceValidator } from "./recommendationSources"
 
 const AUTO_DJ_BUFFER_SIZE = 3
 const RECENT_SEED_LIMIT = 5
+/** Mirrors the backend's `RecommendationRequest.excluded_mbids` limit. */
+const MAX_EXCLUDED_MBIDS = 500
 const RECOMMENDATION_CANDIDATE_LIMIT = 12
 /** Mirrors the backend's `EnqueueJobRequest.duration` limit. */
 const MAX_INDEXED_SECONDS = 7200
@@ -43,6 +45,10 @@ export async function scheduleRecommendationTrack(
         roomId: Id<"rooms">
         trackId: Id<"tracks">
         videoId: string
+        /** The song's own recording, when known (AutoDJ songs carry one). */
+        mbid?: string
+        /** Whether to refresh AutoDJ afterwards. Defaults to true. */
+        refresh?: boolean
     },
 ): Promise<void> {
     await ctx.scheduler.runAfter(
@@ -69,16 +75,23 @@ export const saveMbid = internalMutation({
         const track = await ctx.db.get(args.trackId)
         if (!track) return
 
+        // The fingerprint can collapse different recordings with the same
+        // artist and title, so a track's MBID is only ever filled in, never
+        // replaced. The song's own MBID still goes onto its rows below.
+        const mbid = track.mbid ?? args.mbid
         await ctx.db.patch(args.trackId, {
-            mbid: args.mbid ?? track.mbid,
+            mbid,
             mbidResolvedAt: Date.now(),
-            mbidUnresolvable: args.unresolvable,
+            mbidUnresolvable: args.unresolvable && !mbid,
         })
 
         if (!args.mbid) return
 
         const room = await ctx.db.get(args.roomId)
-        if (room?.currentSong?.videoId === args.videoId) {
+        if (
+            room?.currentSong?.videoId === args.videoId &&
+            !room.currentSong.mbid
+        ) {
             await ctx.db.patch(args.roomId, {
                 currentSong: { ...room.currentSong, mbid: args.mbid },
             })
@@ -136,12 +149,16 @@ export const getRoomContext = internalQuery({
             seedMbids: [...new Set(recentMbids)]
                 .slice(0, RECENT_SEED_LIMIT)
                 .reverse(),
-            excludedMbids: [
-                ...new Set([
-                    ...recentMbids,
-                    ...queue.map((song) => song.mbid).filter(Boolean),
-                ]),
-            ] as string[],
+            // Most recent first, capped at what the backend accepts: a busy
+            // room's queue alone can exceed it, and one over gets a 422.
+            excludedMbids: (
+                [
+                    ...new Set([
+                        ...recentMbids,
+                        ...queue.map((song) => song.mbid).filter(Boolean),
+                    ]),
+                ] as string[]
+            ).slice(0, MAX_EXCLUDED_MBIDS),
             excludedVideoIds: [
                 ...new Set(
                     [
@@ -228,6 +245,8 @@ export const resolveAndEnqueue = internalAction({
         roomId: v.id("rooms"),
         trackId: v.id("tracks"),
         videoId: v.string(),
+        mbid: v.optional(v.string()),
+        refresh: v.optional(v.boolean()),
     },
     handler: async (ctx, args): Promise<void> => {
         const config = recommendationConfig()
@@ -237,11 +256,18 @@ export const resolveAndEnqueue = internalAction({
             internal.recommendations.getTrack,
             { trackId: args.trackId },
         )
-        if (!track || track.mbidUnresolvable) return
+        if (!track) return
 
-        const mbid = track.mbid
+        // A song that knows its own recording (AutoDJ) is indexed under that,
+        // not under whatever the shared catalogue entry was matched to.
+        const mbid = args.mbid ?? track.mbid
         if (!mbid) {
-            await ctx.runMutation(internal.musicBrainz.enqueueResolution, args)
+            if (track.mbidUnresolvable) return
+            await ctx.runMutation(internal.musicBrainz.enqueueResolution, {
+                roomId: args.roomId,
+                trackId: args.trackId,
+                videoId: args.videoId,
+            })
             return
         }
 
@@ -278,9 +304,13 @@ export const resolveAndEnqueue = internalAction({
             }
         }
 
-        await ctx.scheduler.runAfter(0, internal.recommendations.refreshRoom, {
-            roomId: args.roomId,
-        })
+        if (args.refresh !== false) {
+            await ctx.scheduler.runAfter(
+                0,
+                internal.recommendations.refreshRoom,
+                { roomId: args.roomId },
+            )
+        }
     },
 })
 

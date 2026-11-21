@@ -286,6 +286,60 @@ describe("AutoDJ review fixes", () => {
         expect(after.track?.mbidUnresolvable).toBe(true)
     })
 
+    it("caps exclusions at what the backend accepts, newest first", async () => {
+        const { t, roomId } = await seedRoom()
+        await t.run(async (ctx) => {
+            await ctx.db.patch(roomId, {
+                currentSong: {
+                    type: "addedByUser",
+                    ...song("now", "mbid-now"),
+                },
+            })
+            for (let i = 0; i < 600; i++) {
+                await ctx.db.insert("queuedSongs", {
+                    room: roomId,
+                    type: "addedByUser",
+                    ...song(`q${i}`, `mbid-q${i}`),
+                })
+            }
+        })
+        const context = await t.query(internal.recommendations.getRoomContext, {
+            roomId,
+        })
+        expect(context?.excludedMbids).toHaveLength(500)
+        expect(context?.excludedMbids[0]).toBe("mbid-now")
+    })
+
+    it("never replaces the MBID a track or the playing song already has", async () => {
+        const { t, roomId } = await seedRoom()
+        const trackId = await t.run(async (ctx) => {
+            await ctx.db.patch(roomId, {
+                currentSong: { type: "autoDj", ...song("v", "own-mbid") },
+            })
+            return ctx.db.insert("tracks", {
+                title: "T",
+                artist: "A",
+                duration: 180,
+                fingerprint: "a|t",
+                providerIds: { youtube: "v" },
+                mbid: "catalogue-mbid",
+            })
+        })
+        await t.mutation(internal.recommendations.saveMbid, {
+            roomId,
+            trackId,
+            videoId: "v",
+            mbid: "late-fuzzy-mbid",
+            unresolvable: false,
+        })
+        const after = await t.run(async (ctx) => ({
+            track: await ctx.db.get(trackId),
+            room: await ctx.db.get(roomId),
+        }))
+        expect(after.track?.mbid).toBe("catalogue-mbid")
+        expect(after.room?.currentSong?.mbid).toBe("own-mbid")
+    })
+
     it("only retries MusicBrainz failures that might clear up", () => {
         expect(isRetryableMusicBrainzError(new TypeError("fetch failed"))).toBe(
             true,

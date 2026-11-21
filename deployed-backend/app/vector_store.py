@@ -48,16 +48,22 @@ class VectorStore:
                     always_ram=False,
                 )
             )
-        self.client.create_collection(
-            collection_name=name,
-            vectors_config=models.VectorParams(
-                size=dimensions,
-                distance=models.Distance.COSINE,
-                on_disk=True,
-            ),
-            hnsw_config=models.HnswConfigDiff(on_disk=True),
-            quantization_config=quantization,
-        )
+        try:
+            self.client.create_collection(
+                collection_name=name,
+                vectors_config=models.VectorParams(
+                    size=dimensions,
+                    distance=models.Distance.COSINE,
+                    on_disk=True,
+                ),
+                hnsw_config=models.HnswConfigDiff(on_disk=True),
+                quantization_config=quantization,
+            )
+        except Exception:
+            # Two completions can race to create the first collection. Losing
+            # that race is fine; anything else is a real error.
+            if not self.client.collection_exists(name):
+                raise
         return name
 
     def upsert(
@@ -143,9 +149,15 @@ class VectorStore:
         centroid = [value / norm for value in centroid]
 
         excluded = set(seed_mbids) | excluded_mbids
+        # Let Qdrant skip exclusions itself. A long session's history clusters
+        # right around the centroid, so filtering afterwards would spend most
+        # of the candidate window on songs the room has already heard.
         response = self.client.query_points(
             collection_name=name,
             query=centroid,
+            query_filter=models.Filter(
+                must_not=[models.HasIdCondition(has_id=sorted(excluded))]
+            ),
             limit=min(256, max(limit * 5, 25)),
             with_payload=True,
             with_vectors=False,

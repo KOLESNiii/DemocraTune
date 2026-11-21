@@ -160,6 +160,28 @@ describe("room scheduling end to end", () => {
         expect(played.join("")).toBe("ABCACAC")
     })
 
+    it("charges the song already playing in a room that predates turn tracking", async () => {
+        const room = await seedRoom("roundRobin", [
+            { name: "A", queued: 3 },
+            { name: "B", queued: 3 },
+        ])
+        // Mid-session at deploy: A is on, nothing recorded yet. A's queued
+        // songs are older, so first-come order alone would pick A again.
+        await room.t.run(async (ctx) => {
+            await ctx.db.patch(room.roomId, {
+                currentSong: {
+                    addedBy: room.users.A,
+                    type: "addedByUser",
+                    videoId: "A-playing",
+                    title: "A playing",
+                    artist: "A",
+                    duration: 180,
+                },
+            })
+        })
+        expect(await playThrough(room, 4)).toEqual(["B", "A", "B", "A"])
+    })
+
     it("counts a song added to a silent room as that listener's turn", async () => {
         const room = await seedRoom("roundRobin", [])
         const ids = await room.t.run(async (ctx) => ({
