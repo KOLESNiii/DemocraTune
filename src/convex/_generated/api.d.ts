@@ -11,6 +11,7 @@
 import type * as auth from "../auth.js";
 import type * as crons from "../crons.js";
 import type * as exports from "../exports.js";
+import type * as fairShare from "../fairShare.js";
 import type * as fingerprint from "../fingerprint.js";
 import type * as functions from "../functions.js";
 import type * as http from "../http.js";
@@ -37,6 +38,7 @@ declare const fullApi: ApiFromModules<{
   auth: typeof auth;
   crons: typeof crons;
   exports: typeof exports;
+  fairShare: typeof fairShare;
   fingerprint: typeof fingerprint;
   functions: typeof functions;
   http: typeof http;

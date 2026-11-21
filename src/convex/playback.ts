@@ -3,7 +3,7 @@ import { Doc, Id } from "./_generated/dataModel"
 import type { MutationCtx } from "./_generated/server"
 import { tallyVoteDocs } from "./ratings"
 import { scheduleRecommendationTrack } from "./recommendations"
-import { getNextSong } from "./scheduling"
+import { chooseNextSong } from "./scheduling"
 import { upsertTrack } from "./tracks"
 
 /**
@@ -58,9 +58,14 @@ export async function advanceRoom(
         for (const vote of votes) {
             await ctx.db.delete(vote._id)
         }
+
+        // The old song is history now. Take it off the room before choosing,
+        // or its owner's rating would count it twice (once as the current
+        // song, once from history) and squeeze their forget window by one.
+        await ctx.db.patch(roomId, { currentSong: undefined })
     }
 
-    const nextSong = await getNextSong(ctx, roomId)
+    const { song: nextSong, fairShare } = await chooseNextSong(ctx, roomId)
 
     if (nextSong) {
         // Copy only the song fields; the queue doc also carries Convex metadata
@@ -86,6 +91,8 @@ export async function advanceRoom(
                 artist,
                 duration,
             },
+            // Record the turn, so the next decision knows it happened.
+            ...(fairShare ? { fairShare } : {}),
         })
         await ctx.db.delete(nextSong._id)
         await ctx.scheduler.runAfter(0, internal.recommendations.refreshRoom, {

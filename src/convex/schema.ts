@@ -24,6 +24,23 @@ const song = {
     duration: v.number(),
 }
 
+/**
+ * Persistent turn-taking state for the round robin and DemocraSchedule
+ * schedulers. See `fairShare.ts`. Keys of `users` are user ids, or "anon".
+ */
+export const fairShareValidator = v.object({
+    virtualTime: v.number(),
+    turnCount: v.number(),
+    users: v.record(
+        v.string(),
+        v.object({
+            tag: v.number(),
+            lastTurn: v.number(),
+            waiting: v.boolean(),
+        }),
+    ),
+})
+
 export const schedulerValidator = v.union(
     v.literal("FCFS"),
     v.literal("roundRobin"),
@@ -54,6 +71,8 @@ export default defineSchema({
         expiresAt: v.number(),
         currentSong: v.optional(v.object(song)),
         playlistId: v.optional(v.string()),
+        // Absent until the first turn is recorded, and on FCFS rooms.
+        fairShare: v.optional(fairShareValidator),
         settings: v.object({
             maxSongsPerUser: v.number(),
             scheduler: schedulerValidator,
