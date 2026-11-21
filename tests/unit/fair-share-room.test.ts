@@ -182,6 +182,43 @@ describe("room scheduling end to end", () => {
         expect(await playThrough(room, 4)).toEqual(["B", "A", "B", "A"])
     })
 
+    it("charges that song at the weight its votes earned", async () => {
+        const room = await seedRoom("weighted", [
+            { name: "A", queued: 3 },
+            { name: "B", queued: 3 },
+        ])
+        // Only the latest song counts, and A's playing song has 8 upvotes, so
+        // A's weight is 12 against B's 4.
+        await room.t.run(async (ctx) => {
+            const settings = (await ctx.db.get(room.roomId))!.settings
+            await ctx.db.patch(room.roomId, {
+                settings: { ...settings, numSongsToForget: 1 },
+                currentSong: {
+                    addedBy: room.users.A,
+                    type: "addedByUser",
+                    videoId: "A-playing",
+                    title: "A playing",
+                    artist: "A",
+                    duration: 180,
+                },
+            })
+            for (let i = 0; i < 8; i++) {
+                const voter = await ctx.db.insert("users", {})
+                await ctx.db.insert("songVotes", {
+                    room: room.roomId,
+                    videoId: "A-playing",
+                    voter,
+                    songOwner: room.users.A,
+                    value: 1,
+                })
+            }
+        })
+        // Charged at weight 12, A's turn is short, so A comes round again
+        // first. Charged at a miscounted weight 4, B would go first.
+        const played = await playThrough(room, 1)
+        expect(played).toEqual(["A"])
+    })
+
     it("counts a song added to a silent room as that listener's turn", async () => {
         const room = await seedRoom("roundRobin", [])
         const ids = await room.t.run(async (ctx) => ({

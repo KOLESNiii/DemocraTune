@@ -179,7 +179,7 @@ export const dispatchResolutionQueue = internalMutation({
             // or it could hold the single request slot forever.
             const attempts = job.attempts + 1
             if (attempts >= MUSICBRAINZ_MAX_ATTEMPTS) {
-                await giveUpOnTrack(ctx, job.track)
+                // Not the track's fault; it can queue again on its next play.
                 await ctx.db.delete(job._id)
                 continue
             }
@@ -345,10 +345,15 @@ export const retryResolution = internalMutation({
         }
 
         const attempts = job.attempts + 1
-        if (args.retryable === false || attempts >= MUSICBRAINZ_MAX_ATTEMPTS) {
-            // Give up: record the track as unresolvable so nothing queues it
-            // again, and free the slot for everyone else.
+        if (args.retryable === false) {
+            // MusicBrainz rejected the request itself; asking again can't help.
+            // Record the track as unresolvable so nothing queues it again.
             await giveUpOnTrack(ctx, job.track)
+            await ctx.db.delete(job._id)
+        } else if (attempts >= MUSICBRAINZ_MAX_ATTEMPTS) {
+            // Probably an outage. Free the slot for everyone else, but don't
+            // condemn the track: the next time it's added or played it queues
+            // for another try.
             await ctx.db.delete(job._id)
         } else {
             const nextAttemptAt = Date.now() + musicBrainzRetryDelay(attempts)

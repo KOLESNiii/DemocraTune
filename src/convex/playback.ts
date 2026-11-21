@@ -68,15 +68,16 @@ export async function advanceRoom(
             await ctx.db.delete(vote._id)
         }
 
-        // A room that was already playing before turn tracking existed hasn't
-        // charged whoever is on now. Do that first, so they don't go again.
-        const fairShare = await bootstrapFairShare(ctx, room)
-        if (fairShare) await ctx.db.patch(roomId, { fairShare })
-
         // The old song is history now. Take it off the room before choosing,
         // or its owner's rating would count it twice (once as the current
         // song, once from history) and squeeze their forget window by one.
         await ctx.db.patch(roomId, { currentSong: undefined })
+
+        // A room that was already playing before turn tracking existed hasn't
+        // charged whoever was just on. Do that first, so they don't go again.
+        // `room` is the snapshot from before the patch, so it still says who.
+        const fairShare = await bootstrapFairShare(ctx, room)
+        if (fairShare) await ctx.db.patch(roomId, { fairShare })
     }
 
     const { song: nextSong, fairShare } = await chooseNextSong(ctx, roomId)

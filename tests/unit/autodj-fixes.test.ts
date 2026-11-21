@@ -182,7 +182,8 @@ describe("AutoDJ review fixes", () => {
         expect(state.job).toBeNull()
         expect(state.track?.mbidUnresolvable).toBe(true)
 
-        // Nor is one that has used up its attempts.
+        // One that has used up its attempts frees the slot, but an outage
+        // isn't the track's fault, so it may queue again on its next play.
         const exhausted = await seedJob(MUSICBRAINZ_MAX_ATTEMPTS - 1)
         await t.mutation(internal.musicBrainz.retryResolution, {
             jobId: exhausted.jobId,
@@ -192,7 +193,7 @@ describe("AutoDJ review fixes", () => {
         })
         state = await after(exhausted)
         expect(state.job).toBeNull()
-        expect(state.track?.mbidUnresolvable).toBe(true)
+        expect(state.track?.mbidUnresolvable).toBeFalsy()
     })
 
     it("never lets a late MusicBrainz result clobber a known MBID", async () => {
@@ -283,7 +284,7 @@ describe("AutoDJ review fixes", () => {
             track: await ctx.db.get(ids.track),
         }))
         expect(after.job).toBeNull()
-        expect(after.track?.mbidUnresolvable).toBe(true)
+        expect(after.track?.mbidUnresolvable).toBeFalsy()
     })
 
     it("caps exclusions at what the backend accepts, newest first", async () => {
