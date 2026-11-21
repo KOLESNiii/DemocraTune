@@ -5,7 +5,11 @@ import { query } from "./_generated/server"
 import type { MutationCtx } from "./_generated/server"
 import { mutation } from "./functions"
 import { advanceRoom } from "./playback"
-import { attachNicknames, getScheduledQueue } from "./scheduling"
+import {
+    attachNicknames,
+    chargeDirectPlay,
+    getScheduledQueue,
+} from "./scheduling"
 
 /**
  * This query returns the queue of songs for a room, in the order the room's
@@ -157,7 +161,13 @@ export const addSong = mutation({
         // Decide whether this song should become the current song or to queue it
         if (!room.currentSong) {
             // room currently has no song playing, so this song should become the current song
+            const fairShare = await chargeDirectPlay(
+                ctx,
+                room,
+                userId as Id<"users">,
+            )
             await ctx.db.patch(args.roomId, {
+                ...(fairShare ? { fairShare } : {}),
                 currentSong: {
                     addedBy: userId as Id<"users">,
                     videoId: args.videoId,

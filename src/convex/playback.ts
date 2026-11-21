@@ -2,7 +2,7 @@ import { internal } from "./_generated/api"
 import { Doc, Id } from "./_generated/dataModel"
 import type { MutationCtx } from "./_generated/server"
 import { tallyVoteDocs } from "./ratings"
-import { getNextSong } from "./scheduling"
+import { bootstrapFairShare, chooseNextSong } from "./scheduling"
 import { upsertTrack } from "./tracks"
 
 /**
@@ -51,9 +51,20 @@ export async function advanceRoom(
         for (const vote of votes) {
             await ctx.db.delete(vote._id)
         }
+
+        // The old song is history now. Take it off the room before choosing,
+        // or its owner's rating would count it twice (once as the current
+        // song, once from history) and squeeze their forget window by one.
+        await ctx.db.patch(roomId, { currentSong: undefined })
+
+        // A room that was already playing before turn tracking existed hasn't
+        // charged whoever was just on. Do that first, so they don't go again.
+        // `room` is the snapshot from before the patch, so it still says who.
+        const fairShare = await bootstrapFairShare(ctx, room)
+        if (fairShare) await ctx.db.patch(roomId, { fairShare })
     }
 
-    const nextSong = await getNextSong(ctx, roomId)
+    const { song: nextSong, fairShare } = await chooseNextSong(ctx, roomId)
 
     if (nextSong) {
         // Copy only the song fields; the queue doc also carries Convex metadata
@@ -61,6 +72,8 @@ export async function advanceRoom(
         const { addedBy, type, videoId, title, artist, duration } = nextSong
         await ctx.db.patch(roomId, {
             currentSong: { addedBy, type, videoId, title, artist, duration },
+            // Record the turn, so the next decision knows it happened.
+            ...(fairShare ? { fairShare } : {}),
         })
         await ctx.db.delete(nextSong._id)
     } else {
