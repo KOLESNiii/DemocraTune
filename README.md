@@ -33,8 +33,8 @@ user-weighted fairness, and experimental features such as voting and karaoke mod
   - ***First Come First Served*** - The default scheduling system inherited from SongUp.
   - ***Round Robin*** - A round robin implementation, taking a song from each user in turn.
   - ***DemocraSchedule*** - A round robin variation using a user's song voting record. Implemented as
-    smooth weighted round robin, so well-rated users get proportionally more turns while everyone
-    stays interleaved.
+    weighted fair queueing: a listener with weight X gets X/Y as many turns as one with weight Y,
+    for every pair in the room, while everyone stays interleaved and newcomers can't bank turns.
   
 - [X] **🎶 Never Silence**
   When creating a room, hosts can choose a fallback playlist that will play when no one has added a song to the queue, while
