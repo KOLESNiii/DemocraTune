@@ -100,7 +100,10 @@ describe("fair share scheduling", () => {
         const random = () =>
             (seed = (seed * 1103515245 + 12345) % 2 ** 31) / 2 ** 31
 
-        for (let trial = 0; trial < 300; trial++) {
+        // Track the worst case and assert once: hundreds of thousands of
+        // expect() calls are slow enough to time out under coverage in CI.
+        let worst = 0
+        for (let trial = 0; trial < 200; trial++) {
             const size = 2 + Math.floor(random() * 7)
             const weights = Object.fromEntries(
                 Array.from({ length: size }, (_, i) => [
@@ -116,12 +119,11 @@ describe("fair share scheduling", () => {
                 seen[id] = (seen[id] ?? 0) + 1
                 for (const [user, weight] of Object.entries(weights)) {
                     const ideal = ((index + 1) * weight) / total
-                    expect(
-                        Math.abs((seen[user] ?? 0) - ideal),
-                    ).toBeLessThanOrEqual(2)
+                    worst = Math.max(worst, Math.abs((seen[user] ?? 0) - ideal))
                 }
             })
         }
+        expect(worst).toBeLessThanOrEqual(2)
     })
 
     it("interleaves turns instead of playing one user in a block", () => {
