@@ -25,7 +25,9 @@ export function SongCard({
     return (
         <div
             className={cn(
-                "group relative flex min-w-0 items-center justify-between gap-3 border-b py-3 transition-colors sm:gap-4",
+                // Sized by its own width, not the screen's: the host's queue
+                // column is narrow even on a wide TV.
+                "group @container relative flex min-w-0 items-center justify-between gap-3 border-b py-3 transition-colors",
                 tone === "dark"
                     ? "border-white/15 hover:bg-white/5"
                     : "border-ink/20 hover:bg-white/40",
@@ -37,16 +39,16 @@ export function SongCard({
                 width={128}
                 height={128}
                 alt={`${song.title}`}
-                className="aspect-video h-16 w-28 shrink-0 object-cover sm:h-20 sm:w-36"
+                className="aspect-video h-16 w-28 shrink-0 object-cover @md:h-20 @md:w-36"
                 unoptimized
             />
             <div className="w-full min-w-0">
-                <h4 className="font-display text-lg leading-tight font-bold tracking-[-0.025em] md:text-xl">
+                <h4 className="font-display text-lg leading-tight font-bold tracking-[-0.025em] @md:text-xl">
                     {song.title}
                 </h4>
                 <p
                     className={cn(
-                        "mt-1 text-sm md:text-base",
+                        "mt-1 text-sm @md:text-base",
                         tone === "dark" ? "text-white/65" : "text-ink/55",
                     )}
                 >
@@ -62,7 +64,7 @@ export function SongCard({
                 {song.addedByNickname && (
                     <p
                         className={cn(
-                            "max-w-24 truncate text-right text-xs sm:max-w-36 sm:text-sm",
+                            "max-w-24 truncate text-right text-xs @md:max-w-36 @md:text-sm",
                             tone === "dark" ? "text-white/55" : "text-ink/50",
                         )}
                     >

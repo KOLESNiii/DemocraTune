@@ -76,18 +76,22 @@ export default function Host({
     const isDemocraSchedule = room?.settings?.scheduler === "weighted"
 
     return (
-        <div className="bg-night relative h-[100dvh] min-h-0 w-screen overflow-hidden p-3 text-white sm:p-4 lg:p-5">
+        // `isolate` makes this a stacking context, so the background's -z-10
+        // paints above this element's own bg-night instead of hidden under it.
+        <div className="bg-night relative isolate h-[100dvh] min-h-0 w-screen overflow-hidden p-3 text-white sm:p-4 lg:p-5">
             <HostBackground videoId={currentSong?.videoId} />
 
             <main className="relative z-10 h-full min-h-0">
                 <div
                     className={cn(
-                        "grid h-full min-h-0 grid-cols-1 gap-5 lg:grid-cols-[minmax(0,2fr)_minmax(22rem,0.78fr)]",
+                        "tv:grid-cols-[minmax(0,2fr)_minmax(22rem,0.78fr)] grid h-full min-h-0 grid-cols-1 gap-5",
                         !currentSong && "hidden",
                     )}
                 >
                     <section className="flex min-h-0 flex-col">
-                        <div className="relative aspect-video w-full shrink-0 overflow-hidden border-2 border-white/35 bg-black shadow-2xl">
+                        {/* Capped by height too, so on a short screen the title and
+                            progress still fit beneath it. */}
+                        <div className="relative aspect-video w-full max-w-[calc((100dvh-16rem)*16/9)] shrink-0 overflow-hidden border-2 border-white/35 bg-black shadow-2xl">
                             <HostPlayer
                                 song={currentSong}
                                 onAdvance={advance}
@@ -95,7 +99,7 @@ export default function Host({
                             />
                         </div>
 
-                        <div className="flex min-h-0 flex-1 flex-col justify-center py-5">
+                        <div className="tall:py-5 flex min-h-0 flex-1 flex-col justify-center py-3">
                             <div className="flex items-center gap-4">
                                 <Progress
                                     value={playback.progress * 100}
@@ -113,12 +117,12 @@ export default function Host({
                                 </span>
                             </div>
 
-                            <div className="mt-5 grid gap-4 border-t border-white/25 pt-4 xl:grid-cols-[1fr_auto] xl:items-end">
+                            <div className="tv:grid-cols-[1fr_auto] tv:items-end tall:mt-5 tall:pt-4 mt-3 grid gap-4 border-t border-white/25 pt-3">
                                 <div>
-                                    <h1 className="font-display line-clamp-2 text-4xl leading-[0.92] font-extrabold tracking-[-0.055em] text-balance xl:text-6xl">
+                                    <h1 className="font-display tall:text-4xl xl:tall:text-6xl line-clamp-2 text-3xl leading-[0.92] font-extrabold tracking-[-0.055em] text-balance">
                                         {currentSong?.title}
                                     </h1>
-                                    <p className="mt-2 text-lg text-white/65 xl:text-xl">
+                                    <p className="xl:tall:text-xl mt-2 text-lg text-white/65">
                                         {currentSong?.artist}
                                         {currentSong?.addedByNickname && (
                                             <span className="text-white/40">
@@ -130,7 +134,7 @@ export default function Host({
                                     </p>
                                 </div>
 
-                                <div className="flex min-h-10 flex-wrap items-center gap-4 xl:justify-end">
+                                <div className="tv:justify-end flex min-h-10 flex-wrap items-center gap-4">
                                     {votes && votes.likes > 0 && (
                                         <span className="text-vote-up flex items-center gap-1.5 text-sm font-bold">
                                             <ThumbsUpIcon className="size-4" />
@@ -162,13 +166,13 @@ export default function Host({
                             <Link href="/host">
                                 <BrandMark compact className="text-2xl" />
                             </Link>
-                            <p className="font-code hidden text-xs tracking-[0.16em] text-white/45 uppercase lg:block">
+                            <p className="font-code tv:block hidden text-xs tracking-[0.16em] text-white/45 uppercase">
                                 Press F for fullscreen
                             </p>
                         </footer>
                     </section>
 
-                    <aside className="flex min-h-0 flex-col border-t border-white/20 pt-5 lg:border-t-0 lg:border-l lg:pt-0 lg:pl-5">
+                    <aside className="tv:border-t-0 tv:border-l tv:pt-0 tv:pl-5 flex min-h-0 flex-col border-t border-white/20 pt-5">
                         <section
                             aria-labelledby="join-room-heading"
                             className="grid grid-cols-[minmax(0,1fr)_8rem] items-center gap-4 border-b-2 border-white/65 pb-5 sm:grid-cols-[minmax(0,1fr)_10rem] xl:grid-cols-[minmax(0,1fr)_11rem] 2xl:grid-cols-[minmax(0,1fr)_12rem]"
@@ -183,7 +187,7 @@ export default function Host({
                                 <RoomCode
                                     code={room?.code ?? ""}
                                     label="Room code"
-                                    className="mt-2 max-w-full [&>span]:text-3xl sm:[&>span]:text-5xl lg:[&>span]:text-3xl xl:[&>span]:text-4xl 2xl:[&>span]:text-5xl"
+                                    className="max-xl:tv:[&>span]:text-3xl mt-2 max-w-full [&>span]:text-3xl sm:[&>span]:text-5xl xl:[&>span]:text-4xl 2xl:[&>span]:text-5xl"
                                 />
                                 <p className="mt-3 text-xs leading-snug text-white/55 xl:text-sm">
                                     Scan or visit{" "}
@@ -215,12 +219,12 @@ export default function Host({
 
 function EmptyBroadcast({ code }: { code: string }) {
     return (
-        <section className="flex min-h-[calc(100svh-2rem)] flex-col lg:absolute lg:inset-0 lg:min-h-0">
+        <section className="tv:absolute tv:inset-0 tv:min-h-0 flex min-h-[calc(100svh-2rem)] flex-col">
             <header className="flex items-center justify-between border-b border-white/25 pb-4">
                 <BrandMark compact className="text-3xl xl:text-4xl" />
             </header>
 
-            <div className="grid min-h-0 flex-1 gap-10 py-8 lg:grid-cols-[1.35fr_0.65fr] lg:items-center xl:gap-20">
+            <div className="tv:grid-cols-[1.35fr_0.65fr] tv:items-center grid min-h-0 flex-1 gap-10 py-8 xl:gap-20">
                 <div>
                     <RoomCode
                         code={code}
@@ -228,13 +232,14 @@ function EmptyBroadcast({ code }: { code: string }) {
                         className="[&>span:last-child]:text-[clamp(5rem,13vw,13rem)]"
                     />
                     <p className="mt-8 max-w-3xl text-2xl leading-tight text-white/60 xl:text-4xl">
-                        Visit <b className="text-white">{SITE_NAME}</b>, enter
-                        the code, and choose the first track together.
+                        Visit{" "}
+                        <b className="wrap-anywhere text-white">{SITE_NAME}</b>,
+                        enter the code, and choose the first track together.
                     </p>
                 </div>
 
-                <div className="flex flex-col items-center gap-6 lg:items-stretch">
-                    <div className="mx-auto aspect-square w-full max-w-sm border-[10px] border-white bg-white p-4 shadow-[16px_16px_0_0_#ff593d] lg:max-w-md">
+                <div className="tv:items-stretch flex flex-col items-center gap-6">
+                    <div className="tall:max-w-md mx-auto aspect-square w-full max-w-sm border-[10px] border-white bg-white p-4 shadow-[16px_16px_0_0_#ff593d]">
                         <RoomQRCode roomCode={code} />
                     </div>
                 </div>
