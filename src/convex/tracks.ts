@@ -22,9 +22,9 @@ import { internalMutation } from "./functions"
 /**
  * Finds or creates the catalogue entry for a song, and returns its id.
  *
- * Called on the way into history, so the catalogue only ever contains songs the
- * room actually heard. Newly created entries are queued for resolution against
- * the other streaming services.
+ * Called when a song is accepted and again on the way into history. Newly
+ * created entries are queued for resolution against the other streaming
+ * services; both paths are idempotent through the fingerprint index.
  */
 export async function upsertTrack(
     ctx: MutationCtx,

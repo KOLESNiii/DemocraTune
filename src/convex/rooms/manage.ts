@@ -3,6 +3,7 @@ import { v } from "convex/values"
 import { Id } from "../_generated/dataModel"
 import { MutationCtx, query } from "../_generated/server"
 import { internalMutation, mutation } from "../functions"
+import { normalizeSourceOrder } from "../recommendationSources"
 import { schedulerValidator } from "../schema"
 import { clampSkipThreshold } from "../settings"
 
@@ -13,6 +14,7 @@ export const createRoom = mutation({
         numSongsToForget: v.number(),
         /** Share of listeners who must vote before the current song is skipped. */
         skipThreshold: v.optional(v.number()),
+        autoDjEnabled: v.optional(v.boolean()),
         fallbackSongs: v.optional(
             v.array(
                 v.object({
@@ -50,6 +52,10 @@ export const createRoom = mutation({
                 scheduler: args.scheduler,
                 numSongsToForget: args.numSongsToForget,
                 skipThreshold: clampSkipThreshold(args.skipThreshold),
+                autoDj: {
+                    enabled: args.autoDjEnabled ?? true,
+                    sourceOrder: normalizeSourceOrder(),
+                },
             },
         })
 
@@ -109,7 +115,6 @@ export const cleanExpiredRooms = internalMutation({
         for (const room of expiredRooms) {
             await ctx.db.delete(room._id)
         }
-
     },
 })
 
