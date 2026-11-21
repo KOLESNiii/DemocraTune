@@ -1,7 +1,10 @@
+import { v } from "convex/values"
 import { internal } from "./_generated/api"
 import { Doc, Id } from "./_generated/dataModel"
 import type { MutationCtx } from "./_generated/server"
+import { internalMutation } from "./functions"
 import { tallyVoteDocs } from "./ratings"
+import { scheduleRecommendationTrack } from "./recommendations"
 import { bootstrapFairShare, chooseNextSong } from "./scheduling"
 import { upsertTrack } from "./tracks"
 
@@ -38,6 +41,7 @@ export async function advanceRoom(
 
         const { likes, dislikes } = tallyVoteDocs(votes)
 
+        const trackId = await upsertTrack(ctx, oldSong)
         await ctx.db.insert("history", {
             room: roomId,
             ...oldSong,
@@ -45,8 +49,20 @@ export async function advanceRoom(
             dislikes,
             // Gives the played song an identity that outlives YouTube, so the
             // night can be exported somewhere else later.
-            track: await upsertTrack(ctx, oldSong),
+            track: trackId,
         })
+        // People's songs were sent for recommendation indexing when they were
+        // added. AutoDJ and fallback songs never went through `addSong`, so
+        // this is their only chance. advanceRoom refreshes AutoDJ itself.
+        if (oldSong.type !== "addedByUser") {
+            await scheduleRecommendationTrack(ctx, {
+                roomId,
+                trackId,
+                videoId: oldSong.videoId,
+                mbid: oldSong.mbid,
+                refresh: false,
+            })
+        }
 
         for (const vote of votes) {
             await ctx.db.delete(vote._id)
@@ -69,15 +85,41 @@ export async function advanceRoom(
     if (nextSong) {
         // Copy only the song fields; the queue doc also carries Convex metadata
         // and a room reference that don't belong on the room.
-        const { addedBy, type, videoId, title, artist, duration } = nextSong
+        const {
+            addedBy,
+            type,
+            videoId,
+            mbid,
+            recommendationSource,
+            title,
+            artist,
+            duration,
+        } = nextSong
         await ctx.db.patch(roomId, {
-            currentSong: { addedBy, type, videoId, title, artist, duration },
+            currentSong: {
+                addedBy,
+                type,
+                videoId,
+                mbid,
+                recommendationSource,
+                title,
+                artist,
+                duration,
+            },
             // Record the turn, so the next decision knows it happened.
             ...(fairShare ? { fairShare } : {}),
         })
         await ctx.db.delete(nextSong._id)
+        await ctx.scheduler.runAfter(0, internal.recommendations.refreshRoom, {
+            roomId,
+        })
     } else {
         await ctx.db.patch(roomId, { currentSong: undefined })
+        // Out of songs. If AutoDJ is on, ask it for more; when they arrive,
+        // `startIfSilent` gets the room going again.
+        await ctx.scheduler.runAfter(0, internal.recommendations.refreshRoom, {
+            roomId,
+        })
     }
 
     if (oldSong && room.playlistId) {
@@ -90,3 +132,16 @@ export async function advanceRoom(
 
     return nextSong
 }
+
+/**
+ * Starts the next song in a room that has gone quiet, e.g. once an AutoDJ
+ * refill lands after the queue ran dry. Does nothing if something is playing.
+ */
+export const startIfSilent = internalMutation({
+    args: { roomId: v.id("rooms") },
+    handler: async (ctx, { roomId }) => {
+        const room = await ctx.db.get(roomId)
+        if (!room || room.currentSong) return
+        await advanceRoom(ctx, roomId)
+    },
+})

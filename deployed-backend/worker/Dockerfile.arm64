@@ -1,0 +1,105 @@
+FROM python:3.11-slim-bookworm AS essentia-builder
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    TF_NEED_CUDA=0
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+       build-essential \
+       git \
+       libavcodec-dev \
+       libavformat-dev \
+       libavutil-dev \
+       libchromaprint-dev \
+       libeigen3-dev \
+       libfftw3-dev \
+       libsamplerate0-dev \
+       libswresample-dev \
+       libtag1-dev \
+       libyaml-dev \
+       pkg-config \
+       python3-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+
+COPY requirements.arm64.txt ./
+RUN pip install --no-cache-dir -r requirements.arm64.txt
+
+ARG ESSENTIA_COMMIT=b9fa6cb674ca43dfb94d28d293aeda441c6745db
+ARG ESSENTIA_BUILD_JOBS=2
+ARG ESSENTIA_ALGORITHMS=AudioLoader,AutoCorrelation,BeatTrackerDegara,BeatTrackerMultiFeature,BpmRubato,CartesianToPolar,DynamicComplexity,ERBBands,FFT,FileOutputProxy,Flux,FrameCutter,HFC,HPCP,IIR,Key,KeyExtractor,Magnitude,MelBands,MonoLoader,MonoMixer,MovingAverage,NoiseAdder,OnsetDetection,OnsetDetectionGlobal,PeakDetection,PoolToTensor,Resample,RhythmExtractor2013,Scale,SpectralPeaks,SpectralWhitening,Spectrum,TempoTapDegara,TempoTapMaxAgreement,TensorToPool,TensorToVectorReal,TensorflowInputMusiCNN,TensorflowPredict,TensorflowPredictEffnetDiscogs,TriangularBands,UnaryOperator,VectorRealToTensor,Windowing
+
+RUN git clone https://github.com/MTG/essentia.git \
+    && cd essentia \
+    && git checkout "$ESSENTIA_COMMIT" \
+    && sed -i 's/if major_version >= 1:/if major_version == 1:/' \
+       src/3rdparty/tensorflow/setup_tensorflow.py \
+    && src/3rdparty/tensorflow/setup_from_python.sh \
+    && python3 waf configure \
+       --prefix=/usr/local \
+       --with-python \
+       --with-tensorflow \
+       --include-algos="$ESSENTIA_ALGORITHMS" \
+    && python3 waf -j"$ESSENTIA_BUILD_JOBS" \
+    && python3 waf install \
+    && ldconfig
+
+# Essentia's TensorFlow helper predates current Linux ARM wheels. It links the
+# framework library but omits the C API provider from libessentia's DT_NEEDED
+# entries, leaving symbols such as TF_CloseSession unresolved at import time.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends patchelf \
+    && rm -rf /var/lib/apt/lists/* \
+    && ln -s \
+       /usr/local/lib/python3.11/site-packages/tensorflow/libtensorflow_cc.so.2 \
+       /usr/local/lib/libtensorflow_cc.so.2 \
+    && patchelf --add-needed libtensorflow_cc.so.2 /usr/local/lib/libessentia.so
+
+
+FROM python:3.11-slim-bookworm
+
+ARG MODEL_URL=https://essentia.upf.edu/models/feature-extractors/discogs-effnet/discogs-effnet-bs1-1.pb
+ARG MODEL_SHA256=58a577a603669b922589179bd85ae06031fe642ffcc0ee873d2d79fbfc0ff8e5
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+       ca-certificates \
+       curl \
+       ffmpeg \
+       libchromaprint1 \
+       libfftw3-single3 \
+       libsamplerate0 \
+       libtag1v5 \
+       libyaml-0-2 \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    CUDA_VISIBLE_DEVICES=-1 \
+    TF_NUM_INTEROP_THREADS=1 \
+    TF_NUM_INTRAOP_THREADS=1 \
+    OMP_NUM_THREADS=1 \
+    OPENBLAS_NUM_THREADS=1 \
+    LD_LIBRARY_PATH=/usr/local/lib:/usr/local/lib/python3.11/site-packages/tensorflow:/usr/local/lib/python3.11/site-packages/tensorflow_cpu_aws.libs
+
+WORKDIR /worker
+
+RUN mkdir -p /opt/models \
+    && curl --fail --location --connect-timeout 15 \
+       --speed-limit 1024 --speed-time 30 \
+       --retry 5 --retry-delay 2 --retry-all-errors \
+       "$MODEL_URL" --output /opt/models/discogs-effnet-bs1-1.pb \
+    && echo "$MODEL_SHA256  /opt/models/discogs-effnet-bs1-1.pb" \
+       | sha256sum --check --strict
+
+COPY --from=essentia-builder /usr/local/lib /usr/local/lib
+COPY worker.py ./
+
+RUN useradd --create-home --uid 10001 worker \
+    && chown -R worker:worker /worker /opt/models
+
+USER worker
+
+CMD ["python", "worker.py"]

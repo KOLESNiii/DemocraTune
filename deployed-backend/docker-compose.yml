@@ -1,0 +1,101 @@
+name: democratune-recommendations
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      APP_API_TOKEN: ${APP_API_TOKEN:?APP_API_TOKEN is required}
+      WORKER_API_TOKEN: ${WORKER_API_TOKEN:?WORKER_API_TOKEN is required}
+      QDRANT_URL: http://qdrant:6333
+      QDRANT_API_KEY: ${QDRANT_API_KEY:?QDRANT_API_KEY is required}
+      STATE_DB_PATH: /var/lib/democratune/state.sqlite3
+      DEFAULT_PIPELINE_VERSION: ${DEFAULT_PIPELINE_VERSION:-essentia-discogs-effnet-1280-v1}
+      DEFAULT_SOURCE_ORDER: ${DEFAULT_SOURCE_ORDER:-engine,listenbrainz,fallback_playlist}
+      LISTENBRAINZ_SIMILAR_ALGORITHM: ${LISTENBRAINZ_SIMILAR_ALGORITHM:-session_based_days_7500_session_300_contribution_5_threshold_15_limit_50_skip_30_top_n_listeners_1000}
+      QDRANT_SCALAR_QUANTIZATION: ${QDRANT_SCALAR_QUANTIZATION:-true}
+    volumes:
+      - api-state:/var/lib/democratune
+    depends_on:
+      - qdrant
+    expose:
+      - "8000"
+
+  qdrant:
+    image: qdrant/qdrant:v1.16.2
+    restart: unless-stopped
+    environment:
+      QDRANT__SERVICE__API_KEY: ${QDRANT_API_KEY:?QDRANT_API_KEY is required}
+    volumes:
+      - qdrant-storage:/qdrant/storage
+      - qdrant-snapshots:/qdrant/snapshots
+    expose:
+      - "6333"
+      - "6334"
+
+  caddy:
+    image: caddy:2.10.2-alpine
+    restart: unless-stopped
+    environment:
+      BACKEND_ADDRESS: ${BACKEND_ADDRESS:-localhost}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - api
+
+  # Run this service on the intermittent home PC, not on the Oracle host:
+  # docker compose --profile worker up --build worker
+  worker:
+    profiles: ["worker"]
+    build:
+      context: worker
+    restart: unless-stopped
+    environment:
+      BACKEND_API_URL: ${BACKEND_API_URL:?BACKEND_API_URL is required for the worker}
+      WORKER_API_TOKEN: ${WORKER_API_TOKEN:?WORKER_API_TOKEN is required}
+      WORKER_ID: ${WORKER_ID:-home-ubuntu-worker}
+      PIPELINE_VERSION: ${DEFAULT_PIPELINE_VERSION:-essentia-discogs-effnet-1280-v1}
+      POLL_SECONDS: ${WORKER_POLL_SECONDS:-20}
+      LEASE_SECONDS: ${WORKER_LEASE_SECONDS:-1800}
+      MAX_AUDIO_SECONDS: ${WORKER_MAX_AUDIO_SECONDS:-1200}
+      MODEL_PATH: /opt/models/discogs-effnet-bs1-1.pb
+
+  # Run continuously on the Oracle Ampere A1 host. Essentia is compiled against
+  # the ARM64 TensorFlow CPU package in a multi-stage image.
+  worker-arm64:
+    profiles: ["worker-arm64"]
+    platform: linux/arm64
+    build:
+      context: worker
+      dockerfile: Dockerfile.arm64
+      args:
+        ESSENTIA_BUILD_JOBS: ${ARM_WORKER_BUILD_JOBS:-2}
+    restart: unless-stopped
+    cpus: ${ARM_WORKER_CPUS:-1.0}
+    mem_limit: ${ARM_WORKER_MEMORY:-4g}
+    environment:
+      BACKEND_API_URL: ${ORACLE_WORKER_BACKEND_API_URL:-http://api:8000}
+      WORKER_API_TOKEN: ${WORKER_API_TOKEN:?WORKER_API_TOKEN is required}
+      WORKER_ID: ${ARM_WORKER_ID:-oracle-arm64-worker}
+      PIPELINE_VERSION: ${DEFAULT_PIPELINE_VERSION:-essentia-discogs-effnet-1280-v1}
+      POLL_SECONDS: ${WORKER_POLL_SECONDS:-20}
+      LEASE_SECONDS: ${WORKER_LEASE_SECONDS:-1800}
+      MAX_AUDIO_SECONDS: ${WORKER_MAX_AUDIO_SECONDS:-1200}
+      MODEL_PATH: /opt/models/discogs-effnet-bs1-1.pb
+    depends_on:
+      - api
+
+volumes:
+  api-state:
+  qdrant-storage:
+  qdrant-snapshots:
+  caddy-data:
+  caddy-config:

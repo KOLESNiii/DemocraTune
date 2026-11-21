@@ -34,10 +34,12 @@ export function ServiceLinks({
     links,
     className,
     tone = "dark",
+    onClick,
 }: {
     links?: Record<string, string>
     className?: string
     tone?: "dark" | "light"
+    onClick?: (event: React.MouseEvent<HTMLDivElement>) => void
 }) {
     if (!links) return null
 
@@ -50,7 +52,10 @@ export function ServiceLinks({
     if (named.length === 0 && !page) return null
 
     return (
-        <div className={cn("flex flex-wrap items-center gap-1.5", className)}>
+        <div
+            className={cn("flex flex-wrap items-center gap-1.5", className)}
+            onClick={onClick}
+        >
             {named.map(([key, label]) => (
                 <Chip key={key} href={links[key]} label={label} tone={tone} />
             ))}

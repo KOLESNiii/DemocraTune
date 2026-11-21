@@ -1,0 +1,486 @@
+import { v } from "convex/values"
+import { internal } from "./_generated/api"
+import type { Doc, Id } from "./_generated/dataModel"
+import {
+    internalAction,
+    internalQuery,
+    type MutationCtx,
+} from "./_generated/server"
+import { internalMutation } from "./functions"
+import { recommendationSourceValidator } from "./recommendationSources"
+
+const AUTO_DJ_BUFFER_SIZE = 3
+const RECENT_SEED_LIMIT = 5
+/** Mirrors the backend's `RecommendationRequest.excluded_mbids` limit. */
+const MAX_EXCLUDED_MBIDS = 500
+const RECOMMENDATION_CANDIDATE_LIMIT = 12
+/** Mirrors the backend's `EnqueueJobRequest.duration` limit. */
+const MAX_INDEXED_SECONDS = 7200
+
+type RecommendationCandidate = {
+    recording_mbid: string
+    title: string
+    artist: string
+    source: "engine" | "listenbrainz"
+}
+
+type PlayableCandidate = RecommendationCandidate & {
+    videoId: string
+    duration: number
+}
+
+const playableCandidateValidator = v.object({
+    recording_mbid: v.string(),
+    title: v.string(),
+    artist: v.string(),
+    source: recommendationSourceValidator,
+    videoId: v.string(),
+    duration: v.number(),
+})
+
+/** Schedule all network work outside the mutation that accepted the song. */
+export async function scheduleRecommendationTrack(
+    ctx: MutationCtx,
+    args: {
+        roomId: Id<"rooms">
+        trackId: Id<"tracks">
+        videoId: string
+        /** The song's own recording, when known (AutoDJ songs carry one). */
+        mbid?: string
+        /** Whether to refresh AutoDJ afterwards. Defaults to true. */
+        refresh?: boolean
+    },
+): Promise<void> {
+    await ctx.scheduler.runAfter(
+        0,
+        internal.recommendations.resolveAndEnqueue,
+        args,
+    )
+}
+
+export const getTrack = internalQuery({
+    args: { trackId: v.id("tracks") },
+    handler: async (ctx, args) => await ctx.db.get(args.trackId),
+})
+
+export const saveMbid = internalMutation({
+    args: {
+        roomId: v.id("rooms"),
+        trackId: v.id("tracks"),
+        videoId: v.string(),
+        mbid: v.optional(v.string()),
+        unresolvable: v.boolean(),
+    },
+    handler: async (ctx, args) => {
+        const track = await ctx.db.get(args.trackId)
+        if (!track) return
+
+        // The fingerprint can collapse different recordings with the same
+        // artist and title, so a track's MBID is only ever filled in, never
+        // replaced. The song's own MBID still goes onto its rows below.
+        const mbid = track.mbid ?? args.mbid
+        await ctx.db.patch(args.trackId, {
+            mbid,
+            mbidResolvedAt: Date.now(),
+            mbidUnresolvable: args.unresolvable && !mbid,
+        })
+
+        if (!args.mbid) return
+
+        const room = await ctx.db.get(args.roomId)
+        if (
+            room?.currentSong?.videoId === args.videoId &&
+            !room.currentSong.mbid
+        ) {
+            await ctx.db.patch(args.roomId, {
+                currentSong: { ...room.currentSong, mbid: args.mbid },
+            })
+        }
+
+        const queued = await ctx.db
+            .query("queuedSongs")
+            .withIndex("by_room_type", (q) => q.eq("room", args.roomId))
+            .collect()
+        for (const song of queued) {
+            if (song.videoId === args.videoId && !song.mbid) {
+                await ctx.db.patch(song._id, { mbid: args.mbid })
+            }
+        }
+
+        const history = await ctx.db
+            .query("history")
+            .withIndex("by_room_video", (q) =>
+                q.eq("room", args.roomId).eq("videoId", args.videoId),
+            )
+            .collect()
+        for (const song of history) {
+            if (!song.mbid) {
+                await ctx.db.patch(song._id, { mbid: args.mbid })
+            }
+        }
+    },
+})
+
+export const getRoomContext = internalQuery({
+    args: { roomId: v.id("rooms") },
+    handler: async (ctx, args) => {
+        const room = await ctx.db.get(args.roomId)
+        if (!room?.settings.autoDj?.enabled) return null
+
+        const queue = await ctx.db
+            .query("queuedSongs")
+            .withIndex("by_room_type", (q) => q.eq("room", args.roomId))
+            .collect()
+        const history = await ctx.db
+            .query("history")
+            .withIndex("by_room", (q) => q.eq("room", args.roomId))
+            .order("desc")
+            .take(100)
+
+        const recentMbids = [
+            room.currentSong?.mbid,
+            ...history.map((song) => song.mbid),
+        ].filter((mbid): mbid is string => Boolean(mbid))
+
+        return {
+            sourceOrder: room.settings.autoDj.sourceOrder,
+            // The backend weights later seeds more heavily, so send the most
+            // recent few oldest first, with the current song last.
+            seedMbids: [...new Set(recentMbids)]
+                .slice(0, RECENT_SEED_LIMIT)
+                .reverse(),
+            // Most recent first, capped at what the backend accepts: a busy
+            // room's queue alone can exceed it, and one over gets a 422.
+            excludedMbids: (
+                [
+                    ...new Set([
+                        ...recentMbids,
+                        ...queue.map((song) => song.mbid).filter(Boolean),
+                    ]),
+                ] as string[]
+            ).slice(0, MAX_EXCLUDED_MBIDS),
+            excludedVideoIds: [
+                ...new Set(
+                    [
+                        room.currentSong?.videoId,
+                        ...history.map((song) => song.videoId),
+                        ...queue.map((song) => song.videoId),
+                    ].filter((videoId): videoId is string => Boolean(videoId)),
+                ),
+            ],
+            autoDjCount: queue.filter((song) => song.type === "autoDj").length,
+        }
+    },
+})
+
+export const insertCandidates = internalMutation({
+    args: {
+        roomId: v.id("rooms"),
+        candidates: v.array(playableCandidateValidator),
+    },
+    handler: async (ctx, args) => {
+        const room = await ctx.db.get(args.roomId)
+        if (!room?.settings.autoDj?.enabled) return 0
+
+        const queue = await ctx.db
+            .query("queuedSongs")
+            .withIndex("by_room_type", (q) => q.eq("room", args.roomId))
+            .collect()
+        let remaining = Math.max(
+            0,
+            AUTO_DJ_BUFFER_SIZE -
+                queue.filter((song) => song.type === "autoDj").length,
+        )
+        if (!remaining) return 0
+
+        const mbids = new Set(
+            queue
+                .map((song) => song.mbid)
+                .filter((mbid): mbid is string => !!mbid),
+        )
+        const videoIds = new Set(queue.map((song) => song.videoId))
+        if (room.currentSong?.mbid) mbids.add(room.currentSong.mbid)
+        if (room.currentSong?.videoId) videoIds.add(room.currentSong.videoId)
+
+        let inserted = 0
+        for (const candidate of args.candidates) {
+            if (!remaining) break
+            if (
+                mbids.has(candidate.recording_mbid) ||
+                videoIds.has(candidate.videoId)
+            ) {
+                continue
+            }
+
+            await ctx.db.insert("queuedSongs", {
+                room: args.roomId,
+                type: "autoDj",
+                videoId: candidate.videoId,
+                mbid: candidate.recording_mbid,
+                recommendationSource: candidate.source,
+                title: candidate.title,
+                artist: candidate.artist,
+                duration: candidate.duration,
+            })
+            mbids.add(candidate.recording_mbid)
+            videoIds.add(candidate.videoId)
+            inserted++
+            remaining--
+        }
+
+        // The refill can land after the room has already run dry. Keeping the
+        // music playing means starting it again rather than waiting for the
+        // host to press skip.
+        if (inserted && !room.currentSong) {
+            await ctx.scheduler.runAfter(0, internal.playback.startIfSilent, {
+                roomId: args.roomId,
+            })
+        }
+        return inserted
+    },
+})
+
+export const resolveAndEnqueue = internalAction({
+    args: {
+        roomId: v.id("rooms"),
+        trackId: v.id("tracks"),
+        videoId: v.string(),
+        mbid: v.optional(v.string()),
+        refresh: v.optional(v.boolean()),
+    },
+    handler: async (ctx, args): Promise<void> => {
+        const config = recommendationConfig()
+        if (!config) return
+
+        const track: Doc<"tracks"> | null = await ctx.runQuery(
+            internal.recommendations.getTrack,
+            { trackId: args.trackId },
+        )
+        if (!track) return
+
+        // A song that knows its own recording (AutoDJ) is indexed under that,
+        // not under whatever the shared catalogue entry was matched to.
+        const mbid = args.mbid ?? track.mbid
+        if (!mbid) {
+            if (track.mbidUnresolvable) return
+            await ctx.runMutation(internal.musicBrainz.enqueueResolution, {
+                roomId: args.roomId,
+                trackId: args.trackId,
+                videoId: args.videoId,
+            })
+            return
+        }
+
+        await ctx.runMutation(internal.recommendations.saveMbid, {
+            roomId: args.roomId,
+            trackId: args.trackId,
+            videoId: args.videoId,
+            mbid,
+            unresolvable: false,
+        })
+
+        // The backend only indexes up to two hours of audio. Anything longer
+        // would be rejected, so don't ask; it still works as a seed.
+        if (track.duration <= MAX_INDEXED_SECONDS) {
+            try {
+                await fetchJson(new URL("/v1/jobs", config.url), {
+                    method: "POST",
+                    headers: recommendationHeaders(config.token),
+                    body: JSON.stringify({
+                        mbid,
+                        youtube_url: `https://www.youtube.com/watch?v=${args.videoId}`,
+                        title: track.title || "Unknown title",
+                        artist: track.artist || "Unknown artist",
+                        duration: Math.max(1, Math.round(track.duration)),
+                    }),
+                })
+            } catch (error) {
+                // Indexing is enrichment. A Qdrant or coordinator outage must
+                // not make adding or playing a song fail.
+                console.error(
+                    `Could not enqueue recommendation job for ${mbid}`,
+                    error,
+                )
+            }
+        }
+
+        if (args.refresh !== false) {
+            await ctx.scheduler.runAfter(
+                0,
+                internal.recommendations.refreshRoom,
+                { roomId: args.roomId },
+            )
+        }
+    },
+})
+
+export const refreshRoom = internalAction({
+    args: { roomId: v.id("rooms") },
+    handler: async (ctx, args): Promise<void> => {
+        const config = recommendationConfig()
+        const searchBaseUrl = process.env.FASTAPI_BASE_URL
+        if (!config || !searchBaseUrl) return
+
+        const context = await ctx.runQuery(
+            internal.recommendations.getRoomContext,
+            args,
+        )
+        if (
+            !context ||
+            !context.seedMbids.length ||
+            context.autoDjCount >= AUTO_DJ_BUFFER_SIZE
+        ) {
+            return
+        }
+
+        let response: unknown
+        try {
+            response = await fetchJson(
+                new URL("/v1/recommendations", config.url),
+                {
+                    method: "POST",
+                    headers: recommendationHeaders(config.token),
+                    body: JSON.stringify({
+                        seed_mbids: context.seedMbids,
+                        excluded_mbids: context.excludedMbids,
+                        source_order: context.sourceOrder,
+                        limit: RECOMMENDATION_CANDIDATE_LIMIT,
+                    }),
+                },
+            )
+        } catch (error) {
+            console.error("Could not refresh AutoDJ recommendations", error)
+            return
+        }
+
+        const candidates = readRecommendationCandidates(response)
+        const playable: PlayableCandidate[] = []
+        const excludedVideoIds = new Set(context.excludedVideoIds)
+        const needed = AUTO_DJ_BUFFER_SIZE - context.autoDjCount
+
+        for (const candidate of candidates) {
+            if (playable.length >= needed) break
+            try {
+                const song = await findPlayableSong(
+                    searchBaseUrl,
+                    candidate,
+                    excludedVideoIds,
+                )
+                if (!song) continue
+                excludedVideoIds.add(song.videoId)
+                playable.push({ ...candidate, ...song })
+            } catch (error) {
+                console.error(
+                    `Could not resolve recommendation ${candidate.recording_mbid}`,
+                    error,
+                )
+            }
+        }
+
+        if (playable.length) {
+            await ctx.runMutation(internal.recommendations.insertCandidates, {
+                roomId: args.roomId,
+                candidates: playable,
+            })
+        }
+    },
+})
+
+function recommendationConfig(): { url: string; token: string } | null {
+    const url = process.env.RECOMMENDATION_API_URL
+    const token = process.env.RECOMMENDATION_API_TOKEN
+    if (!url || !token) return null
+    return { url, token }
+}
+
+function recommendationHeaders(token: string): Record<string, string> {
+    return {
+        Accept: "application/json",
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+    }
+}
+
+async function fetchJson(url: URL, init?: RequestInit): Promise<unknown> {
+    const response = await fetch(url, {
+        ...init,
+        signal: AbortSignal.timeout(10_000),
+    })
+    if (!response.ok) {
+        throw new Error(`${url.pathname} returned ${response.status}`)
+    }
+    return await response.json()
+}
+
+export function readRecommendationCandidates(
+    body: unknown,
+): RecommendationCandidate[] {
+    if (!body || typeof body !== "object") return []
+    const rows = (body as { candidates?: unknown }).candidates
+    if (!Array.isArray(rows)) return []
+
+    return rows.flatMap((value): RecommendationCandidate[] => {
+        if (!value || typeof value !== "object") return []
+        const row = value as Record<string, unknown>
+        if (
+            typeof row.recording_mbid !== "string" ||
+            typeof row.title !== "string" ||
+            typeof row.artist !== "string" ||
+            (row.source !== "engine" && row.source !== "listenbrainz")
+        ) {
+            return []
+        }
+        return [
+            {
+                recording_mbid: row.recording_mbid,
+                title: row.title,
+                artist: row.artist,
+                source: row.source,
+            },
+        ]
+    })
+}
+
+async function findPlayableSong(
+    searchBaseUrl: string,
+    candidate: RecommendationCandidate,
+    excludedVideoIds: ReadonlySet<string>,
+): Promise<{ videoId: string; duration: number } | null> {
+    const url = new URL("/api/search", searchBaseUrl)
+    url.search = new URLSearchParams({
+        q: `${candidate.artist} ${candidate.title}`,
+    }).toString()
+    const body = await fetchJson(url, {
+        headers: { Accept: "application/json" },
+    })
+    return readPlayableSong(body, excludedVideoIds)
+}
+
+/**
+ * The first search result that can actually be played and hasn't been heard
+ * already. The top hit is often the upload the room just played, while a later
+ * result is a perfectly good copy of the same recording.
+ */
+export function readPlayableSong(
+    body: unknown,
+    excludedVideoIds: ReadonlySet<string> = new Set(),
+): { videoId: string; duration: number } | null {
+    if (!Array.isArray(body)) return null
+
+    for (const value of body) {
+        if (!value || typeof value !== "object") continue
+        const row = value as Record<string, unknown>
+        if (
+            typeof row.videoId === "string" &&
+            typeof row.duration_seconds === "number" &&
+            row.duration_seconds > 0 &&
+            !excludedVideoIds.has(row.videoId)
+        ) {
+            return {
+                videoId: row.videoId,
+                duration: Math.round(row.duration_seconds),
+            }
+        }
+    }
+    return null
+}

@@ -1,0 +1,5 @@
+essentia-tensorflow==2.1b6.dev1389
+httpx==0.28.1
+numpy==1.26.4
+yt-dlp==2026.7.4
+

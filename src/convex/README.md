@@ -85,6 +85,6 @@ function handleButtonPress() {
 }
 ```
 
-Use the Convex CLI to push your functions to a deployment. See everything
-the Convex CLI can do by running `npx convex -h` in your project root
-directory. To learn more, launch the docs with `npx convex docs`.
+Production and preview deployment are coordinated with the Vercel build from
+the repository root. Follow [`../../DEPLOY.MD`](../../DEPLOY.MD); do not deploy
+this directory independently unless that runbook is updated at the same time.
