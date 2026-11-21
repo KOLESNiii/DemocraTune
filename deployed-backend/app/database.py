@@ -99,7 +99,14 @@ class JobDatabase:
         artist: str,
         duration: int,
         priority: int,
+        vector_missing: bool = False,
     ) -> tuple[dict[str, Any], bool]:
+        """Queue a recording for extraction.
+
+        `vector_missing` means the caller has confirmed the vector store has no
+        point for it, so a job already marked completed is stale (the collection
+        was lost or rebuilt) and is run again.
+        """
         now = time.time()
         job_id = str(uuid4())
         with self._connect() as connection:
@@ -134,7 +141,10 @@ class JobDatabase:
                         priority = ?, lease_owner = NULL, lease_token = NULL,
                         lease_expires_at = NULL, updated_at = ?
                     WHERE mbid = ? AND pipeline_version = ?
-                      AND status = 'failed' AND updated_at <= ?
+                      AND (
+                        (status = 'failed' AND updated_at <= ?)
+                        OR (status = 'completed' AND ?)
+                      )
                     """,
                     (
                         now,
@@ -147,6 +157,7 @@ class JobDatabase:
                         mbid,
                         pipeline_version,
                         now - FAILED_JOB_RETRY_AFTER_SECONDS,
+                        1 if vector_missing else 0,
                     ),
                 )
                 created = reset.rowcount == 1

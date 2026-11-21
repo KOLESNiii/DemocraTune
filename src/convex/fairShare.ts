@@ -190,8 +190,17 @@ export function recordTurn(
         waiting: users[turn.id]?.waiting ?? false,
     }
 
+    const virtualTime = Math.max(state.virtualTime, turn.start)
+
+    // Forget anyone who isn't waiting and whose tag the clock has passed:
+    // `startOf` would put them at the clock anyway. This keeps the stored map
+    // to roughly the people active right now, however long the room runs.
+    for (const [id, user] of Object.entries(users)) {
+        if (!user.waiting && user.tag <= virtualTime) delete users[id]
+    }
+
     return {
-        virtualTime: Math.max(state.virtualTime, turn.start),
+        virtualTime,
         turnCount: state.turnCount + 1,
         users,
     }

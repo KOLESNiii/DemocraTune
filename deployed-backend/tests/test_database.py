@@ -242,6 +242,32 @@ class JobDatabaseTests(unittest.TestCase):
         self.assertEqual(requeued["status"], "pending")
         self.assertEqual(requeued["attempts"], 0)
 
+    def test_completed_job_reruns_only_when_its_vector_is_missing(self) -> None:
+        job, _ = self.enqueue()
+        with self.database._connect() as connection:
+            connection.execute(
+                "UPDATE extraction_jobs SET status = 'completed', attempts = 1 "
+                "WHERE id = ?",
+                (job["id"],),
+            )
+        unchanged, created = self.enqueue()
+        self.assertFalse(created)
+        self.assertEqual(unchanged["status"], "completed")
+
+        rerun, created = self.database.enqueue(
+            mbid="8a49dba0-253a-4535-b87f-78bb035336ce",
+            pipeline_version="test-v1",
+            youtube_url="https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+            title="Test",
+            artist="Artist",
+            duration=180,
+            priority=0,
+            vector_missing=True,
+        )
+        self.assertTrue(created)
+        self.assertEqual(rerun["status"], "pending")
+        self.assertEqual(rerun["attempts"], 0)
+
 
 if __name__ == "__main__":
     unittest.main()

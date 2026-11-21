@@ -209,6 +209,22 @@ describe("fair share scheduling", () => {
         expect(contenders.map((c) => c.queued)).toEqual([2, 1])
     })
 
+    it("forgets people who have left, so the stored state stays small", () => {
+        const regulars = backlogged({ A: 4, B: 4 })
+        let state = EMPTY_FAIR_SHARE
+        // Two thousand passers-by each queue one song and leave.
+        for (let i = 0; i < 2_000; i++) {
+            const contenders: Contender[] = [
+                ...regulars,
+                { id: `guest${i}`, weight: 4, queued: 1, queuedAt: i },
+            ]
+            state = play(contenders, 3, state).state
+        }
+        expect(Object.keys(state.users).length).toBeLessThanOrEqual(4)
+        expect(state.users.A).toBeDefined()
+        expect(state.users.B).toBeDefined()
+    })
+
     it("treats a nonsensical weight as negligible rather than crashing", () => {
         const contenders = backlogged({ A: 4, B: 0 })
         const { sequence } = play(contenders, 10)

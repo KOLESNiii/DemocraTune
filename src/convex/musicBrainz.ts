@@ -31,6 +31,20 @@ export function musicBrainzRetryDelay(attempt: number): number {
     )
 }
 
+/** Records that a track's MBID can't be found, unless it has one already. */
+async function giveUpOnTrack(
+    ctx: MutationCtx,
+    trackId: Id<"tracks">,
+): Promise<void> {
+    const track = await ctx.db.get(trackId)
+    if (track && !track.mbid) {
+        await ctx.db.patch(track._id, {
+            mbidResolvedAt: Date.now(),
+            mbidUnresolvable: true,
+        })
+    }
+}
+
 async function resolutionState(
     ctx: MutationCtx,
 ): Promise<Doc<"musicBrainzResolutionState">> {
@@ -161,10 +175,20 @@ export const dispatchResolutionQueue = internalMutation({
             )
             .take(100)
         for (const job of expired) {
+            // A lookup that keeps vanishing counts towards the attempt cap too,
+            // or it could hold the single request slot forever.
+            const attempts = job.attempts + 1
+            if (attempts >= MUSICBRAINZ_MAX_ATTEMPTS) {
+                await giveUpOnTrack(ctx, job.track)
+                await ctx.db.delete(job._id)
+                continue
+            }
             await ctx.db.patch(job._id, {
                 status: "pending",
+                attempts,
                 nextAttemptAt: now,
                 leaseExpiresAt: undefined,
+                lastError: "lease expired",
             })
         }
 
@@ -264,12 +288,17 @@ export const completeResolution = internalMutation({
 
         const track = await ctx.db.get(job.track)
         if (track) {
+            // The track may have learned its MBID while this job waited, e.g.
+            // from an AutoDJ song with the same fingerprint. That one is
+            // authoritative: a late fuzzy search must not replace it or mark
+            // the track unresolvable.
+            const mbid = track.mbid ?? args.mbid
             await ctx.db.patch(track._id, {
-                mbid: args.mbid ?? track.mbid,
+                mbid,
                 mbidResolvedAt: Date.now(),
-                mbidUnresolvable: !args.mbid,
+                mbidUnresolvable: !mbid,
             })
-            if (args.mbid) {
+            if (mbid) {
                 for (const appearance of job.appearances) {
                     if (!(await ctx.db.get(appearance.roomId))) continue
                     await ctx.scheduler.runAfter(
@@ -319,13 +348,7 @@ export const retryResolution = internalMutation({
         if (args.retryable === false || attempts >= MUSICBRAINZ_MAX_ATTEMPTS) {
             // Give up: record the track as unresolvable so nothing queues it
             // again, and free the slot for everyone else.
-            const track = await ctx.db.get(job.track)
-            if (track && !track.mbid) {
-                await ctx.db.patch(track._id, {
-                    mbidResolvedAt: Date.now(),
-                    mbidUnresolvable: true,
-                })
-            }
+            await giveUpOnTrack(ctx, job.track)
             await ctx.db.delete(job._id)
         } else {
             const nextAttemptAt = Date.now() + musicBrainzRetryDelay(attempts)
@@ -390,10 +413,12 @@ export const resolveClaimedTrack = internalAction({
             internal.recommendations.getTrack,
             { trackId: args.trackId },
         )
-        if (!track) {
+        if (!track || track.mbid) {
+            // Gone, or already identified since it was queued: no lookup.
             await ctx.runMutation(internal.musicBrainz.completeResolution, {
                 jobId: args.jobId,
                 claimGeneration: args.claimGeneration,
+                mbid: track?.mbid,
             })
             return
         }

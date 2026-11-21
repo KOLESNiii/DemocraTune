@@ -93,10 +93,13 @@ async def health() -> dict[str, Any]:
 async def enqueue_job(request: EnqueueJobRequest) -> dict[str, Any]:
     pipeline = request.pipeline_version or settings.default_pipeline_version
     mbid = str(request.mbid)
+    # Only a definite "not there" may re-run a completed job; an outage must not.
+    vector_missing = False
     try:
         exists = await asyncio.to_thread(
             vectors.has_point, mbid=mbid, pipeline_version=pipeline
         )
+        vector_missing = not exists
     except Exception:  # noqa: BLE001 - queueing must survive a Qdrant outage
         logger.exception(
             "Could not check whether %s already exists in pipeline %s; queueing it",
@@ -121,6 +124,7 @@ async def enqueue_job(request: EnqueueJobRequest) -> dict[str, Any]:
         artist=request.artist,
         duration=request.duration,
         priority=request.priority,
+        vector_missing=vector_missing,
     )
     return {"created": created, "already_available": False, "job": job}
 

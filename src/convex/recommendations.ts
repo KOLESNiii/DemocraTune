@@ -12,6 +12,8 @@ import { recommendationSourceValidator } from "./recommendationSources"
 const AUTO_DJ_BUFFER_SIZE = 3
 const RECENT_SEED_LIMIT = 5
 const RECOMMENDATION_CANDIDATE_LIMIT = 12
+/** Mirrors the backend's `EnqueueJobRequest.duration` limit. */
+const MAX_INDEXED_SECONDS = 7200
 
 type RecommendationCandidate = {
     recording_mbid: string
@@ -251,25 +253,29 @@ export const resolveAndEnqueue = internalAction({
             unresolvable: false,
         })
 
-        try {
-            await fetchJson(new URL("/v1/jobs", config.url), {
-                method: "POST",
-                headers: recommendationHeaders(config.token),
-                body: JSON.stringify({
-                    mbid,
-                    youtube_url: `https://www.youtube.com/watch?v=${args.videoId}`,
-                    title: track.title,
-                    artist: track.artist,
-                    duration: Math.max(1, Math.round(track.duration)),
-                }),
-            })
-        } catch (error) {
-            // Indexing is enrichment. A Qdrant or coordinator outage must not
-            // make adding or playing a song fail.
-            console.error(
-                `Could not enqueue recommendation job for ${mbid}`,
-                error,
-            )
+        // The backend only indexes up to two hours of audio. Anything longer
+        // would be rejected, so don't ask; it still works as a seed.
+        if (track.duration <= MAX_INDEXED_SECONDS) {
+            try {
+                await fetchJson(new URL("/v1/jobs", config.url), {
+                    method: "POST",
+                    headers: recommendationHeaders(config.token),
+                    body: JSON.stringify({
+                        mbid,
+                        youtube_url: `https://www.youtube.com/watch?v=${args.videoId}`,
+                        title: track.title || "Unknown title",
+                        artist: track.artist || "Unknown artist",
+                        duration: Math.max(1, Math.round(track.duration)),
+                    }),
+                })
+            } catch (error) {
+                // Indexing is enrichment. A Qdrant or coordinator outage must
+                // not make adding or playing a song fail.
+                console.error(
+                    `Could not enqueue recommendation job for ${mbid}`,
+                    error,
+                )
+            }
         }
 
         await ctx.scheduler.runAfter(0, internal.recommendations.refreshRoom, {

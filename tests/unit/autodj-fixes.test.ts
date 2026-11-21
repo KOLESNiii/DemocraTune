@@ -195,6 +195,97 @@ describe("AutoDJ review fixes", () => {
         expect(state.track?.mbidUnresolvable).toBe(true)
     })
 
+    it("never lets a late MusicBrainz result clobber a known MBID", async () => {
+        const { t, roomId } = await seedRoom()
+        const seed = (known: string) =>
+            t.run(async (ctx) => {
+                const track = await ctx.db.insert("tracks", {
+                    title: "T",
+                    artist: "A",
+                    duration: 180,
+                    fingerprint: `a|${known}`,
+                    providerIds: { youtube: known },
+                    // Learned from an AutoDJ play while the job waited.
+                    mbid: known,
+                })
+                const jobId = await ctx.db.insert(
+                    "musicBrainzResolutionQueue",
+                    {
+                        track,
+                        appearances: [{ roomId, videoId: known }],
+                        status: "leased",
+                        attempts: 0,
+                        nextAttemptAt: Date.now(),
+                        claimGeneration: 1,
+                        leaseExpiresAt: Date.now() + 30_000,
+                    },
+                )
+                return { track, jobId }
+            })
+
+        const noMatch = await seed("known-1")
+        await t.mutation(internal.musicBrainz.completeResolution, {
+            jobId: noMatch.jobId,
+            claimGeneration: 1,
+        })
+        const differentMatch = await seed("known-2")
+        await t.mutation(internal.musicBrainz.completeResolution, {
+            jobId: differentMatch.jobId,
+            claimGeneration: 1,
+            mbid: "fuzzy-guess",
+        })
+
+        const tracks = await t.run(async (ctx) => ({
+            noMatch: await ctx.db.get(noMatch.track),
+            differentMatch: await ctx.db.get(differentMatch.track),
+        }))
+        expect(tracks.noMatch?.mbid).toBe("known-1")
+        expect(tracks.noMatch?.mbidUnresolvable).toBe(false)
+        expect(tracks.differentMatch?.mbid).toBe("known-2")
+        expect(tracks.differentMatch?.mbidUnresolvable).toBe(false)
+    })
+
+    it("counts vanished MusicBrainz lookups towards the attempt cap", async () => {
+        const { t, roomId } = await seedRoom()
+        const ids = await t.run(async (ctx) => {
+            const track = await ctx.db.insert("tracks", {
+                title: "T",
+                artist: "A",
+                duration: 180,
+                fingerprint: "a|vanish",
+                providerIds: { youtube: "vanish" },
+            })
+            const jobId = await ctx.db.insert("musicBrainzResolutionQueue", {
+                track,
+                appearances: [{ roomId, videoId: "vanish" }],
+                status: "leased",
+                attempts: MUSICBRAINZ_MAX_ATTEMPTS - 1,
+                nextAttemptAt: Date.now(),
+                claimGeneration: 1,
+                // The action that held this lease never came back.
+                leaseExpiresAt: Date.now() - 1,
+            })
+            await ctx.db.insert("musicBrainzResolutionState", {
+                key: "global",
+                nextRequestAt: 0,
+                scheduleGeneration: 7,
+                scheduledAt: Date.now(),
+            })
+            return { track, jobId }
+        })
+
+        await t.mutation(internal.musicBrainz.dispatchResolutionQueue, {
+            generation: 7,
+        })
+
+        const after = await t.run(async (ctx) => ({
+            job: await ctx.db.get(ids.jobId),
+            track: await ctx.db.get(ids.track),
+        }))
+        expect(after.job).toBeNull()
+        expect(after.track?.mbidUnresolvable).toBe(true)
+    })
+
     it("only retries MusicBrainz failures that might clear up", () => {
         expect(isRetryableMusicBrainzError(new TypeError("fetch failed"))).toBe(
             true,
