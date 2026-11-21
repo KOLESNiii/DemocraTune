@@ -1,10 +1,14 @@
 /**
  * Fair-share turn taking for the round robin and DemocraSchedule schedulers.
  *
- * This is start-time fair queueing over users rather than packets. Each user
- * carries a virtual *tag*: the point on the room's virtual clock where their
- * next turn starts. A turn lasts `BASE_WEIGHT / weight`, and the user whose turn
- * would finish first plays next. Playing moves their tag on to the end of that
+ * This is weighted fair queueing over users rather than packets: start tags
+ * are kept the way start-time fair queueing keeps them, but the next turn goes
+ * to the smallest *finish* tag. Don't switch the selection to start tags; that
+ * would favour low-weight users on ties and break the X/Y ratio below.
+ *
+ * Each user carries a virtual *tag*: the point on the room's virtual clock
+ * where their next turn starts. A turn lasts `BASE_WEIGHT / weight`, and the
+ * user whose turn would finish first plays next. Playing moves their tag on to the end of that
  * turn, so a weight-12 user's tag creeps forward a third as fast as a weight-4
  * user's, and they come round three times as often.
  *
@@ -110,7 +114,9 @@ function compareCandidates(
     if (!nearlyEqual(a.start, b.start)) return a.start - b.start
 
     // Then whoever played least recently, which makes equal weights a strict
-    // rotation. Users who have never played go after the existing rotation.
+    // rotation while everyone stays queued. Users who have never played go
+    // after the existing rotation. So do users who left and came back once
+    // `recordTurn` has forgotten them; they rejoin in arrival order.
     const lastA = state.users[a.id]?.lastTurn ?? -1
     const lastB = state.users[b.id]?.lastTurn ?? -1
     if (lastA !== lastB) {
