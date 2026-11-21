@@ -114,6 +114,13 @@ class VectorStore:
             with_payload=False,
             with_vectors=True,
         )
+        # Qdrant doesn't promise to return points in request order, and the
+        # weights below depend on it, so put them back in seed order.
+        position = {mbid.lower(): index for index, mbid in enumerate(seed_mbids)}
+        points = sorted(
+            points,
+            key=lambda point: position.get(str(getattr(point, "id", "")).lower(), -1),
+        )
         vectors = [point.vector for point in points if isinstance(point.vector, list)]
         if not vectors:
             return []

@@ -26,6 +26,8 @@ export function SongCard({
 }) {
     function handleKeyDown(event: React.KeyboardEvent<HTMLDivElement>) {
         if (!onOpen || (event.key !== "Enter" && event.key !== " ")) return
+        // Keys pressed on a link or button inside the card belong to it.
+        if (event.target !== event.currentTarget) return
         event.preventDefault()
         onOpen()
     }

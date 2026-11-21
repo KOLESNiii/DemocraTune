@@ -11,6 +11,11 @@ class JobConflictError(RuntimeError):
     pass
 
 
+# A job that failed for good may succeed later (a video comes back, a bug is
+# fixed), so a fresh request for it is honoured once this much time has passed.
+FAILED_JOB_RETRY_AFTER_SECONDS = 24 * 3600
+
+
 class JobDatabase:
     def __init__(self, path: str) -> None:
         self.path = path
@@ -119,6 +124,32 @@ class JobDatabase:
                     now,
                 ),
             )
+            created = cursor.rowcount == 1
+            if not created:
+                reset = connection.execute(
+                    """
+                    UPDATE extraction_jobs
+                    SET status = 'pending', attempts = 0, available_at = ?,
+                        youtube_url = ?, title = ?, artist = ?, duration = ?,
+                        priority = ?, lease_owner = NULL, lease_token = NULL,
+                        lease_expires_at = NULL, updated_at = ?
+                    WHERE mbid = ? AND pipeline_version = ?
+                      AND status = 'failed' AND updated_at <= ?
+                    """,
+                    (
+                        now,
+                        youtube_url,
+                        title,
+                        artist,
+                        duration,
+                        priority,
+                        now,
+                        mbid,
+                        pipeline_version,
+                        now - FAILED_JOB_RETRY_AFTER_SECONDS,
+                    ),
+                )
+                created = reset.rowcount == 1
             row = connection.execute(
                 """
                 SELECT * FROM extraction_jobs
@@ -127,7 +158,7 @@ class JobDatabase:
                 (mbid, pipeline_version),
             ).fetchone()
             assert row is not None
-            return dict(row), cursor.rowcount == 1
+            return dict(row), created
 
     def claim(
         self, *, worker_id: str, pipeline_version: str, lease_seconds: int
@@ -136,6 +167,20 @@ class JobDatabase:
         lease_token = str(uuid4())
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
+            # A worker that died on the final attempt leaves a lease nobody can
+            # reclaim. Settle those as failed instead of leaving them stuck.
+            connection.execute(
+                """
+                UPDATE extraction_jobs
+                SET status = 'failed', lease_owner = NULL, lease_token = NULL,
+                    lease_expires_at = NULL,
+                    last_error = 'lease expired on the final attempt',
+                    updated_at = ?
+                WHERE pipeline_version = ? AND status = 'leased'
+                  AND lease_expires_at < ? AND attempts >= max_attempts
+                """,
+                (now, pipeline_version, now),
+            )
             row = connection.execute(
                 """
                 SELECT * FROM extraction_jobs

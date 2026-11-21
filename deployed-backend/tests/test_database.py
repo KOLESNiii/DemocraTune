@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -187,6 +188,59 @@ class JobDatabaseTests(unittest.TestCase):
             retryable=True,
         )
         self.assertEqual(failed["status"], "pending")
+
+    def test_lease_expiring_on_the_final_attempt_marks_the_job_failed(self) -> None:
+        job, _ = self.enqueue()
+        with self.database._connect() as connection:
+            connection.execute(
+                "UPDATE extraction_jobs SET max_attempts = 1 WHERE id = ?",
+                (job["id"],),
+            )
+        claimed = self.database.claim(
+            worker_id="worker", pipeline_version="test-v1", lease_seconds=60
+        )
+        assert claimed is not None
+        with self.database._connect() as connection:
+            connection.execute(
+                "UPDATE extraction_jobs SET lease_expires_at = 0 WHERE id = ?",
+                (job["id"],),
+            )
+
+        self.assertIsNone(
+            self.database.claim(
+                worker_id="worker", pipeline_version="test-v1", lease_seconds=60
+            )
+        )
+        stuck = self.database.get(job["id"])
+        assert stuck is not None
+        self.assertEqual(stuck["status"], "failed")
+        self.assertIsNone(stuck["lease_token"])
+
+    def test_failed_job_is_requeued_only_after_the_cooldown(self) -> None:
+        job, _ = self.enqueue()
+        with self.database._connect() as connection:
+            connection.execute(
+                """
+                UPDATE extraction_jobs
+                SET status = 'failed', attempts = 5, updated_at = ?
+                WHERE id = ?
+                """,
+                (time.time(), job["id"]),
+            )
+        recent, created = self.enqueue()
+        self.assertFalse(created)
+        self.assertEqual(recent["status"], "failed")
+
+        with self.database._connect() as connection:
+            connection.execute(
+                "UPDATE extraction_jobs SET updated_at = 0 WHERE id = ?",
+                (job["id"],),
+            )
+        requeued, created = self.enqueue()
+        self.assertTrue(created)
+        self.assertEqual(requeued["id"], job["id"])
+        self.assertEqual(requeued["status"], "pending")
+        self.assertEqual(requeued["attempts"], 0)
 
 
 if __name__ == "__main__":

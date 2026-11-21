@@ -13,6 +13,11 @@ export const MUSICBRAINZ_USER_AGENT =
 export const MUSICBRAINZ_REQUEST_INTERVAL_MS = 1_050
 const MUSICBRAINZ_MAX_RETRY_INTERVAL_MS = 10_000
 const MUSICBRAINZ_LEASE_MS = 30_000
+/**
+ * Lookups that keep failing give up after this many tries. Without a cap a
+ * single bad track would hold a slot in the global request queue forever.
+ */
+export const MUSICBRAINZ_MAX_ATTEMPTS = 6
 const STATE_KEY = "global" as const
 
 type Appearance = { roomId: Id<"rooms">; videoId: string }
@@ -297,6 +302,8 @@ export const retryResolution = internalMutation({
         jobId: v.id("musicBrainzResolutionQueue"),
         claimGeneration: v.number(),
         error: v.string(),
+        /** False for failures that retrying can't fix, like a 400. */
+        retryable: v.optional(v.boolean()),
     },
     handler: async (ctx, args): Promise<void> => {
         const job = await ctx.db.get(args.jobId)
@@ -309,14 +316,27 @@ export const retryResolution = internalMutation({
         }
 
         const attempts = job.attempts + 1
-        const nextAttemptAt = Date.now() + musicBrainzRetryDelay(attempts)
-        await ctx.db.patch(job._id, {
-            status: "pending",
-            attempts,
-            nextAttemptAt,
-            leaseExpiresAt: undefined,
-            lastError: args.error.slice(0, 1_000),
-        })
+        if (args.retryable === false || attempts >= MUSICBRAINZ_MAX_ATTEMPTS) {
+            // Give up: record the track as unresolvable so nothing queues it
+            // again, and free the slot for everyone else.
+            const track = await ctx.db.get(job.track)
+            if (track && !track.mbid) {
+                await ctx.db.patch(track._id, {
+                    mbidResolvedAt: Date.now(),
+                    mbidUnresolvable: true,
+                })
+            }
+            await ctx.db.delete(job._id)
+        } else {
+            const nextAttemptAt = Date.now() + musicBrainzRetryDelay(attempts)
+            await ctx.db.patch(job._id, {
+                status: "pending",
+                attempts,
+                nextAttemptAt,
+                leaseExpiresAt: undefined,
+                lastError: args.error.slice(0, 1_000),
+            })
+        }
 
         const state = await resolutionState(ctx)
         const nextRequestAt = Date.now() + MUSICBRAINZ_REQUEST_INTERVAL_MS
@@ -391,6 +411,7 @@ export const resolveClaimedTrack = internalAction({
                 jobId: args.jobId,
                 claimGeneration: args.claimGeneration,
                 error: error instanceof Error ? error.message : String(error),
+                retryable: isRetryableMusicBrainzError(error),
             })
         }
     },
@@ -421,9 +442,25 @@ async function resolveRecordingMbid(
         signal: AbortSignal.timeout(10_000),
     })
     if (!response.ok) {
-        throw new Error(`MusicBrainz returned ${response.status}`)
+        throw new MusicBrainzHttpError(response.status)
     }
     return chooseRecordingMbid(await response.json(), track)
+}
+
+class MusicBrainzHttpError extends Error {
+    constructor(readonly status: number) {
+        super(`MusicBrainz returned ${status}`)
+    }
+}
+
+/**
+ * Network errors, timeouts, rate limiting and server errors may clear up on
+ * their own. Any other 4xx means the request itself is wrong, and sending it
+ * again will only get the same answer.
+ */
+export function isRetryableMusicBrainzError(error: unknown): boolean {
+    if (!(error instanceof MusicBrainzHttpError)) return true
+    return error.status === 429 || error.status >= 500
 }
 
 export function chooseRecordingMbid(

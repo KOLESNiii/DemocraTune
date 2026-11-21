@@ -94,10 +94,12 @@ export const saveMbid = internalMutation({
 
         const history = await ctx.db
             .query("history")
-            .withIndex("by_room", (q) => q.eq("room", args.roomId))
+            .withIndex("by_room_video", (q) =>
+                q.eq("room", args.roomId).eq("videoId", args.videoId),
+            )
             .collect()
         for (const song of history) {
-            if (song.videoId === args.videoId && !song.mbid) {
+            if (!song.mbid) {
                 await ctx.db.patch(song._id, { mbid: args.mbid })
             }
         }
@@ -127,7 +129,11 @@ export const getRoomContext = internalQuery({
 
         return {
             sourceOrder: room.settings.autoDj.sourceOrder,
-            seedMbids: [...new Set(recentMbids)].slice(0, RECENT_SEED_LIMIT),
+            // The backend weights later seeds more heavily, so send the most
+            // recent few oldest first, with the current song last.
+            seedMbids: [...new Set(recentMbids)]
+                .slice(0, RECENT_SEED_LIMIT)
+                .reverse(),
             excludedMbids: [
                 ...new Set([
                     ...recentMbids,
@@ -201,6 +207,15 @@ export const insertCandidates = internalMutation({
             videoIds.add(candidate.videoId)
             inserted++
             remaining--
+        }
+
+        // The refill can land after the room has already run dry. Keeping the
+        // music playing means starting it again rather than waiting for the
+        // host to press skip.
+        if (inserted && !room.currentSong) {
+            await ctx.scheduler.runAfter(0, internal.playback.startIfSilent, {
+                roomId: args.roomId,
+            })
         }
         return inserted
     },
@@ -310,8 +325,12 @@ export const refreshRoom = internalAction({
         for (const candidate of candidates) {
             if (playable.length >= needed) break
             try {
-                const song = await findPlayableSong(searchBaseUrl, candidate)
-                if (!song || excludedVideoIds.has(song.videoId)) continue
+                const song = await findPlayableSong(
+                    searchBaseUrl,
+                    candidate,
+                    excludedVideoIds,
+                )
+                if (!song) continue
                 excludedVideoIds.add(song.videoId)
                 playable.push({ ...candidate, ...song })
             } catch (error) {
@@ -389,6 +408,7 @@ export function readRecommendationCandidates(
 async function findPlayableSong(
     searchBaseUrl: string,
     candidate: RecommendationCandidate,
+    excludedVideoIds: ReadonlySet<string>,
 ): Promise<{ videoId: string; duration: number } | null> {
     const url = new URL("/api/search", searchBaseUrl)
     url.search = new URLSearchParams({
@@ -397,11 +417,17 @@ async function findPlayableSong(
     const body = await fetchJson(url, {
         headers: { Accept: "application/json" },
     })
-    return readPlayableSong(body)
+    return readPlayableSong(body, excludedVideoIds)
 }
 
+/**
+ * The first search result that can actually be played and hasn't been heard
+ * already. The top hit is often the upload the room just played, while a later
+ * result is a perfectly good copy of the same recording.
+ */
 export function readPlayableSong(
     body: unknown,
+    excludedVideoIds: ReadonlySet<string> = new Set(),
 ): { videoId: string; duration: number } | null {
     if (!Array.isArray(body)) return null
 
@@ -411,7 +437,8 @@ export function readPlayableSong(
         if (
             typeof row.videoId === "string" &&
             typeof row.duration_seconds === "number" &&
-            row.duration_seconds > 0
+            row.duration_seconds > 0 &&
+            !excludedVideoIds.has(row.videoId)
         ) {
             return {
                 videoId: row.videoId,

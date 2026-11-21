@@ -121,6 +121,8 @@ export default defineSchema({
         ...song,
     })
         .index("by_room", ["room"])
+        // Used to back-fill a resolved MBID onto earlier plays of one video.
+        .index("by_room_video", ["room", "videoId"])
         // Used to walk a user's most recent songs when computing their rating.
         .index("by_room_added_by", ["room", "addedBy"]),
 

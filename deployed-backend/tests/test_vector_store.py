@@ -69,6 +69,25 @@ class VectorStoreTests(unittest.TestCase):
         self.assertEqual(results[0]["source"], "engine")
         self.assertEqual(self.client.query, [1.0, 0.0])
 
+    def test_recommend_weights_later_seeds_more_in_any_retrieve_order(self) -> None:
+        older = "11111111-1111-4111-8111-111111111111"
+        newer = "22222222-2222-4222-8222-222222222222"
+        # Qdrant hands the points back in the opposite order to the request.
+        self.client.retrieve = lambda **_: [
+            SimpleNamespace(id=newer, vector=[0.0, 1.0]),
+            SimpleNamespace(id=older, vector=[1.0, 0.0]),
+        ]
+        self.store.recommend(
+            seed_mbids=[older, newer],
+            excluded_mbids=set(),
+            pipeline_version="test-v1",
+            limit=5,
+        )
+        assert self.client.query is not None
+        x, y = self.client.query
+        # Weights 1 (older) and 2 (newer): the newer seed dominates.
+        self.assertAlmostEqual(y / x, 2.0)
+
 
 if __name__ == "__main__":
     unittest.main()

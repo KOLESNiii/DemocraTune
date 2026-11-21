@@ -1,6 +1,8 @@
+import { v } from "convex/values"
 import { internal } from "./_generated/api"
 import { Doc, Id } from "./_generated/dataModel"
 import type { MutationCtx } from "./_generated/server"
+import { internalMutation } from "./functions"
 import { tallyVoteDocs } from "./ratings"
 import { scheduleRecommendationTrack } from "./recommendations"
 import { chooseNextSong } from "./scheduling"
@@ -100,6 +102,11 @@ export async function advanceRoom(
         })
     } else {
         await ctx.db.patch(roomId, { currentSong: undefined })
+        // Out of songs. If AutoDJ is on, ask it for more; when they arrive,
+        // `startIfSilent` gets the room going again.
+        await ctx.scheduler.runAfter(0, internal.recommendations.refreshRoom, {
+            roomId,
+        })
     }
 
     if (oldSong && room.playlistId) {
@@ -112,3 +119,16 @@ export async function advanceRoom(
 
     return nextSong
 }
+
+/**
+ * Starts the next song in a room that has gone quiet, e.g. once an AutoDJ
+ * refill lands after the queue ran dry. Does nothing if something is playing.
+ */
+export const startIfSilent = internalMutation({
+    args: { roomId: v.id("rooms") },
+    handler: async (ctx, { roomId }) => {
+        const room = await ctx.db.get(roomId)
+        if (!room || room.currentSong) return
+        await advanceRoom(ctx, roomId)
+    },
+})

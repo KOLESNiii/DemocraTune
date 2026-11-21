@@ -112,7 +112,8 @@ async def enqueue_job(request: EnqueueJobRequest) -> dict[str, Any]:
             "pipeline_version": pipeline,
         }
 
-    job, created = jobs.enqueue(
+    job, created = await asyncio.to_thread(
+        jobs.enqueue,
         mbid=mbid,
         pipeline_version=pipeline,
         youtube_url=request.youtube_url,
@@ -126,7 +127,8 @@ async def enqueue_job(request: EnqueueJobRequest) -> dict[str, Any]:
 
 @app.post("/v1/jobs/claim", dependencies=[Depends(require_worker_token)])
 async def claim_job(request: ClaimJobRequest) -> dict[str, Any]:
-    job = jobs.claim(
+    job = await asyncio.to_thread(
+        jobs.claim,
         worker_id=request.worker_id,
         pipeline_version=request.pipeline_version,
         lease_seconds=request.lease_seconds,
@@ -137,7 +139,8 @@ async def claim_job(request: ClaimJobRequest) -> dict[str, Any]:
 @app.post("/v1/jobs/{job_id}/heartbeat", dependencies=[Depends(require_worker_token)])
 async def heartbeat_job(job_id: str, request: HeartbeatRequest) -> dict[str, Any]:
     try:
-        job = jobs.heartbeat(
+        job = await asyncio.to_thread(
+            jobs.heartbeat,
             job_id=job_id,
             worker_id=request.worker_id,
             lease_token=request.lease_token,
@@ -163,13 +166,14 @@ async def feature_status(mbid: UUID, pipeline_version: str) -> dict[str, Any]:
 
 @app.post("/v1/jobs/{job_id}/complete", dependencies=[Depends(require_worker_token)])
 async def complete_job(job_id: str, request: CompleteJobRequest) -> dict[str, Any]:
-    job = jobs.get(job_id)
+    job = await asyncio.to_thread(jobs.get, job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="job not found")
     if job["status"] == "completed":
         return {"job": job}
     try:
-        job, should_write = jobs.begin_completion(
+        job, should_write = await asyncio.to_thread(
+            jobs.begin_completion,
             job_id=job_id,
             worker_id=request.worker_id,
             lease_token=request.lease_token,
@@ -194,7 +198,8 @@ async def complete_job(job_id: str, request: CompleteJobRequest) -> dict[str, An
         )
     except Exception:
         try:
-            jobs.abort_completion(
+            await asyncio.to_thread(
+                jobs.abort_completion,
                 job_id=job_id,
                 worker_id=request.worker_id,
                 lease_token=request.lease_token,
@@ -204,7 +209,8 @@ async def complete_job(job_id: str, request: CompleteJobRequest) -> dict[str, An
         raise
 
     try:
-        completed = jobs.finish_completion(
+        completed = await asyncio.to_thread(
+            jobs.finish_completion,
             job_id=job_id,
             worker_id=request.worker_id,
             lease_token=request.lease_token,
@@ -222,7 +228,7 @@ async def complete_existing_job(
     job_id: str, request: HeartbeatRequest
 ) -> dict[str, Any]:
     """Finish a retry when an earlier attempt inserted the vector then crashed."""
-    job = jobs.get(job_id)
+    job = await asyncio.to_thread(jobs.get, job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="job not found")
     exists = await asyncio.to_thread(
@@ -233,7 +239,8 @@ async def complete_existing_job(
     if not exists:
         raise HTTPException(status_code=409, detail="feature does not exist")
     try:
-        completed = jobs.complete(
+        completed = await asyncio.to_thread(
+            jobs.complete,
             job_id=job_id,
             worker_id=request.worker_id,
             lease_token=request.lease_token,
@@ -246,7 +253,8 @@ async def complete_existing_job(
 @app.post("/v1/jobs/{job_id}/fail", dependencies=[Depends(require_worker_token)])
 async def fail_job(job_id: str, request: FailJobRequest) -> dict[str, Any]:
     try:
-        job = jobs.fail(
+        job = await asyncio.to_thread(
+            jobs.fail,
             job_id=job_id,
             worker_id=request.worker_id,
             lease_token=request.lease_token,
