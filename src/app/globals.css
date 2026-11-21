@@ -2,6 +2,14 @@
 @import "tw-animate-css";
 
 @custom-variant dark (&:is(.dark *));
+/*
+ * The host screen's two-column layout. Keyed to the screen's shape rather
+ * than its width: TVs often report a 960x540 viewport, which is below \`lg\`
+ * but still wants the video and the queue side by side.
+ */
+@custom-variant tv (@media (orientation: landscape) and (min-width: 48rem));
+/* Screens too short for the full-size type, e.g. 720p TVs and laptops. */
+@custom-variant tall (@media (min-height: 50rem));
 
 @theme inline {
     --color-background: var(--background);
@@ -145,18 +153,8 @@
 }
 
 @theme {
-    --animate-rotate: rotate 120s linear infinite;
     --animate-tally: tally 3.6s ease-in-out infinite;
     --animate-rise-in: rise-in 600ms cubic-bezier(0.22, 1, 0.36, 1) both;
-
-    @keyframes rotate {
-        from {
-            transform: rotate(0deg);
-        }
-        to {
-            transform: rotate(360deg);
-        }
-    }
 
     @keyframes tally {
         0%,
@@ -239,8 +237,7 @@
 
     @media (prefers-reduced-motion: reduce) {
         .animate-tally,
-        .animate-rise-in,
-        .animate-rotate {
+        .animate-rise-in {
             animation: none !important;
         }
     }
